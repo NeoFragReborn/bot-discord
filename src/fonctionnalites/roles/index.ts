@@ -1,0 +1,298 @@
+/**
+ * Rôles et pseudos : le site fait foi.
+ *
+ * Un membre du site qui a lié son compte Discord reçoit, sur le serveur, les rôles reliés à ses
+ * groupes (Discord → Groupes et rôles, dans l'administration) et les perd quand il quitte le
+ * groupe ; si l'option est cochée, il y porte son pseudo du site.
+ *
+ * Quand : au démarrage et à chaque changement de configuration (tout le monde), quand un membre
+ * change de groupe sur le site (événement « user.groups.changed »), quand un membre lié rejoint le
+ * serveur, et toutes les dix minutes environ pour le reste (un pseudo changé, un compte lié).
+ *
+ * Il faut l'intent « Server Members Intent » et, sur le serveur, les permissions « Gérer les rôles »
+ * et « Gérer les pseudos », le rôle du bot placé AU-DESSUS des rôles qu'il distribue.
+ */
+
+import { DiscordAPIError, Events, GatewayIntentBits, PermissionsBitField, type GuildMember } from 'discord.js';
+import { formater, messageErreur, type Valeur } from '../../journal.js';
+import type { Evenement, RoleRelie } from '../../site.js';
+import type { Contexte, Fonctionnalite } from '../types.js';
+import { planifier } from './plan.js';
+
+/** Tours entre deux synchronisations complètes (un tour ≈ 30 secondes). */
+const TOURS_ENTRE_DEUX_SYNCHROS = 20;
+
+/** Ce qu'une synchronisation a fait, pour une seule ligne de journal. */
+interface Bilan {
+    membres: number;
+    donnes: number;
+    retires: number;
+    pseudos: number;
+    horsDePortee: number;
+    erreurs: string[];
+}
+
+const bilanVide = (): Bilan => ({ membres: 0, donnes: 0, retires: 0, pseudos: 0, horsDePortee: 0, erreurs: [] });
+
+export class RolesEtPseudos implements Fonctionnalite {
+    readonly nom = 'roles';
+    readonly intents = [GatewayIntentBits.GuildMembers] as const;
+    readonly evenements = ['user.groups.changed'] as const;
+
+    private ctx: Contexte | null = null;
+    private tours = 0;
+    private enCours: Promise<void> | null = null;
+    /** Les avertissements déjà donnés depuis la dernière configuration : ils ne se répètent pas toutes les dix minutes. */
+    private avertis = new Set<string>();
+    private surArrivee: ((membre: GuildMember) => void) | null = null;
+
+    async demarrer(ctx: Contexte): Promise<void> {
+        this.ctx = ctx;
+        this.surArrivee = (membre) => {
+            if (this.ctx && membre.guild.id === this.ctx.guilde.id) {
+                void this.membreArrive(this.ctx, membre);
+            }
+        };
+        ctx.client.on(Events.GuildMemberAdd, this.surArrivee);
+
+        await this.toutSynchroniser(ctx, true);
+    }
+
+    async reconfigurer(ctx: Contexte): Promise<void> {
+        this.ctx = ctx;
+        this.avertis.clear();
+        await this.toutSynchroniser(ctx, true);
+    }
+
+    async tour(ctx: Contexte): Promise<void> {
+        this.ctx = ctx;
+
+        if (++this.tours >= TOURS_ENTRE_DEUX_SYNCHROS) {
+            this.tours = 0;
+            await this.toutSynchroniser(ctx, false);
+        }
+    }
+
+    async surEvenement(ctx: Contexte, evenement: Evenement): Promise<void> {
+        const id = Number(evenement.data.user_id);
+
+        if (!Number.isInteger(id) || id <= 0 || !this.actif(ctx)) {
+            return;
+        }
+
+        const membre = await ctx.site.membre(id);
+
+        if (!membre?.discord) {
+            return;
+        }
+
+        const discord = await ctx.guilde.members.fetch(membre.discord.id).catch(() => null);
+
+        if (discord) {
+            await this.unMembre(ctx, membre.groups, membre.username, discord);
+        }
+    }
+
+    arreter(): void {
+        if (this.ctx && this.surArrivee) {
+            this.ctx.client.off(Events.GuildMemberAdd, this.surArrivee);
+        }
+
+        this.surArrivee = null;
+        this.ctx = null;
+    }
+
+    /** Un membre lié qui rejoint le serveur reçoit tout de suite ses rôles et son pseudo. */
+    private async membreArrive(ctx: Contexte, discord: GuildMember): Promise<void> {
+        if (!this.actif(ctx)) {
+            return;
+        }
+
+        try {
+            const membre = await ctx.site.membreDiscord(discord.id);
+
+            if (membre) {
+                await this.unMembre(ctx, membre.groups, membre.username, discord);
+            }
+        } catch (erreur) {
+            ctx.journal.warn('Rôles de %s (arrivée) : %s', discord.user.tag, messageErreur(erreur));
+        }
+    }
+
+    /** Il y a quelque chose à synchroniser, et le bot en a les moyens. */
+    private actif(ctx: Contexte): boolean {
+        if (!ctx.config.roles.length && !ctx.config.nicknames) {
+            return false;
+        }
+
+        if (!ctx.intents.members) {
+            this.avertir(ctx, 'Rôles et pseudos en attente : activez « Server Members Intent » dans le portail des développeurs Discord, puis redémarrez le bot.');
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private toutSynchroniser(ctx: Contexte, direQuandRien: boolean): Promise<void> {
+        // Une synchronisation à la fois : celle qui est demandée pendant une autre attend la même.
+        this.enCours ??= this.synchroniserTous(ctx, direQuandRien).finally(() => {
+            this.enCours = null;
+        });
+
+        return this.enCours;
+    }
+
+    private async synchroniserTous(ctx: Contexte, direQuandRien: boolean): Promise<void> {
+        if (!this.actif(ctx)) {
+            return;
+        }
+
+        const correspondances = this.correspondancesUtilisables(ctx);
+        const lies = await ctx.site.membres();
+        // Tous les membres du serveur en une requête (l'intent « membres » le permet).
+        const presents = await ctx.guilde.members.fetch();
+        const bilan = bilanVide();
+
+        for (const lie of lies) {
+            const discord = presents.get(lie.discord_id);
+
+            if (discord) {
+                bilan.membres++;
+                await this.appliquer(ctx, lie.groups, lie.username, discord, correspondances, bilan);
+            }
+        }
+
+        const changes = bilan.donnes + bilan.retires + bilan.pseudos;
+
+        if (changes > 0 || bilan.erreurs.length > 0 || direQuandRien) {
+            ctx.journal.info('Rôles et pseudos : %d membre(s) lié(s) présent(s) sur le serveur — %d rôle(s) donné(s), %d retiré(s), %d pseudo(s) changé(s).', bilan.membres, bilan.donnes, bilan.retires, bilan.pseudos);
+        }
+
+        if (bilan.horsDePortee > 0) {
+            this.avertir(ctx, '%d pseudo(s) hors de portée : ces membres ont un rôle égal ou supérieur à celui du bot (ou possèdent le serveur).', bilan.horsDePortee);
+        }
+
+        this.ecrireErreurs(ctx, bilan);
+    }
+
+    private async unMembre(ctx: Contexte, groupes: readonly string[], pseudo: string, discord: GuildMember): Promise<void> {
+        const bilan = bilanVide();
+
+        await this.appliquer(ctx, groupes, pseudo, discord, this.correspondancesUtilisables(ctx), bilan);
+
+        if (bilan.donnes + bilan.retires + bilan.pseudos > 0) {
+            if (bilan.pseudos) {
+                ctx.journal.info('Rôles et pseudo de %s : %d rôle(s) donné(s), %d retiré(s), pseudo changé.', discord.user.tag, bilan.donnes, bilan.retires);
+            } else {
+                ctx.journal.info('Rôles et pseudo de %s : %d rôle(s) donné(s), %d retiré(s).', discord.user.tag, bilan.donnes, bilan.retires);
+            }
+        }
+
+        this.ecrireErreurs(ctx, bilan);
+    }
+
+    private async appliquer(ctx: Contexte, groupes: readonly string[], pseudo: string, discord: GuildMember, correspondances: readonly RoleRelie[], bilan: Bilan): Promise<void> {
+        const plan = planifier(groupes, pseudo, {
+            roles: new Set(discord.roles.cache.keys()),
+            pseudo: discord.nickname,
+            proprietaire: discord.id === ctx.guilde.ownerId,
+        }, correspondances, ctx.config.nicknames);
+
+        try {
+            if (plan.ajouter.length) {
+                await discord.roles.add(plan.ajouter, 'NeoFrag : groupe du site');
+                bilan.donnes += plan.ajouter.length;
+            }
+
+            if (plan.retirer.length) {
+                await discord.roles.remove(plan.retirer, 'NeoFrag : groupe du site');
+                bilan.retires += plan.retirer.length;
+            }
+        } catch (erreur) {
+            bilan.erreurs.push(`${discord.user.tag} (roles) : ${this.explication(erreur)}`);
+        }
+
+        // Le bot lui-même (un compte d'essai peut l'avoir « lié ») garde le pseudo que le serveur lui donne.
+        if (plan.pseudo !== null && discord.id !== ctx.client.user.id) {
+            if (!discord.manageable) {
+                bilan.horsDePortee++;
+
+                return;
+            }
+
+            try {
+                await discord.setNickname(plan.pseudo, 'NeoFrag : pseudo du site');
+                bilan.pseudos++;
+            } catch (erreur) {
+                bilan.erreurs.push(`${discord.user.tag} (nickname) : ${this.explication(erreur)}`);
+            }
+        }
+    }
+
+    /**
+     * Les correspondances que le bot peut appliquer. Un rôle disparu du serveur, tenu par une
+     * intégration, ou placé au-dessus du rôle du bot est écarté — et dit une fois dans le journal.
+     */
+    private correspondancesUtilisables(ctx: Contexte): RoleRelie[] {
+        const moi = ctx.guilde.members.me;
+
+        if (ctx.config.roles.length && moi && !moi.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+            this.avertir(ctx, 'Le bot n’a pas la permission « Gérer les rôles » sur le serveur : les rôles ne sont pas synchronisés.');
+
+            return [];
+        }
+
+        const plafond = moi?.roles.highest.position ?? 0;
+
+        return ctx.config.roles.filter((c) => {
+            const role = ctx.guilde.roles.cache.get(c.role_id);
+
+            if (!role) {
+                this.avertir(ctx, 'Le rôle relié au groupe « %s » n’existe plus sur le serveur : défaites ou refaites la correspondance dans l’administration.', c.group_key);
+
+                return false;
+            }
+
+            if (role.managed) {
+                this.avertir(ctx, 'Le rôle « %s » est tenu par une intégration : Discord interdit de le donner.', role.name);
+
+                return false;
+            }
+
+            if (role.position >= plafond) {
+                this.avertir(ctx, 'Le rôle « %s » est au-dessus du rôle du bot : dans les réglages du serveur (Rôles), placez le rôle du bot plus haut.', role.name);
+
+                return false;
+            }
+
+            return true;
+        });
+    }
+
+    private explication(erreur: unknown): string {
+        if (erreur instanceof DiscordAPIError && erreur.code === 50013) {
+            return 'Missing Permissions (50013)';
+        }
+
+        return messageErreur(erreur);
+    }
+
+    private ecrireErreurs(ctx: Contexte, bilan: Bilan): void {
+        if (!bilan.erreurs.length) {
+            return;
+        }
+
+        const premieres = bilan.erreurs.slice(0, 3).join(' ; ') + (bilan.erreurs.length > 3 ? ' ; …' : '');
+        ctx.journal.error('Rôles et pseudos : %d échec(s) — %s. Le rôle du bot doit être placé au-dessus des rôles qu’il donne et des membres qu’il renomme.', bilan.erreurs.length, premieres);
+    }
+
+    private avertir(ctx: Contexte, modele: string, ...args: Valeur[]): void {
+        const cle = formater(modele, args);
+
+        if (!this.avertis.has(cle)) {
+            this.avertis.add(cle);
+            ctx.journal.warn(modele, ...args);
+        }
+    }
+}
