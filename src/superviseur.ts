@@ -11,7 +11,7 @@
 
 import { ErreurConnexion, type Connexion } from './discord.js';
 import { messageErreur, type Journal } from './journal.js';
-import { ErreurSite, type ConfigBot, type InstantaneGuilde, type ReponseSigneDeVie, type Site } from './site.js';
+import { ErreurSite, type CommandeSite, type ConfigBot, type DeclarationFonctionnalite, type InstantaneGuilde, type ReponseSigneDeVie, type SigneDeVie, type Site } from './site.js';
 
 export interface OptionsSuperviseur {
     site: Site;
@@ -22,6 +22,10 @@ export interface OptionsSuperviseur {
     intervalle: number;
     /** Ouvre la connexion à Discord (remplacée par une fausse dans les tests). */
     ouvrir: (config: ConfigBot) => Promise<Connexion>;
+    /** Les fonctionnalités, déclarées au site à chaque signe de vie — même en pause : l'administration les règle avant la marche. */
+    declarations?: DeclarationFonctionnalite[];
+    /** Les textes que le bot montre sur Discord (textes.ts), dont la configuration rend les traductions. */
+    textes?: string[];
 }
 
 /** Après un changement d'état, le tour suivant vient vite : l'administration le voit tout de suite. */
@@ -44,6 +48,8 @@ export class Superviseur {
     private arrete = false;
     private minuterie: NodeJS.Timeout | null = null;
     private changement = false;
+    /** Le dernier événement du site traité, gardé même connexion fermée : le site le retient pour la reprise. */
+    private curseur: number | null = null;
 
     constructor(private readonly o: OptionsSuperviseur) {}
 
@@ -105,7 +111,9 @@ export class Superviseur {
             return;
         }
 
-        let redemarrer = reponse.commands.includes('restart');
+        // Un site 1.2.11 n'envoie qu'un nom ; les suivants, un type et des données.
+        const commandes: CommandeSite[] = reponse.commands.map((c) => (typeof c === 'string' ? { type: c, data: {} } : c));
+        let redemarrer = commandes.some((c) => c.type === 'restart');
 
         if (reponse.version !== this.versionConfig) {
             let config: ConfigBot;
@@ -140,7 +148,7 @@ export class Superviseur {
         }
 
         if (redemarrer) {
-            if (reponse.commands.includes('restart')) {
+            if (commandes.some((c) => c.type === 'restart')) {
                 this.o.journal.info('Redémarrage demandé depuis l’administration.');
             }
 
@@ -157,16 +165,34 @@ export class Superviseur {
             await this.fermer();
         }
 
+        for (const commande of commandes) {
+            if (commande.type === 'restart') {
+                continue;
+            }
+
+            if (!this.connexion) {
+                this.o.journal.warn('Commande « %s » ignorée : le bot n’est pas connecté à Discord.', commande.type);
+            } else if (commande.type === 'resync') {
+                this.o.journal.info('Resynchronisation demandée depuis l’administration.');
+                await this.connexion.resynchroniser();
+            } else {
+                await this.connexion.executer(commande);
+            }
+        }
+
         if (this.connexion) {
             await this.connexion.tour();
             this.dernierInstantane = this.connexion.instantane() ?? this.dernierInstantane;
+            this.curseur = this.connexion.curseur;
         }
 
         await this.envoyerJournal();
     }
 
     /** Ce que le bot dit de lui au site. */
-    etat() {
+    etat(): SigneDeVie {
+        const curseur = this.connexion?.curseur ?? this.curseur;
+
         return {
             version: this.o.version,
             connected: this.connexion?.prete ?? false,
@@ -174,6 +200,9 @@ export class Superviseur {
             // En pause, le bot redit le serveur tel qu'il l'a vu en dernier : les listes de salons et
             // de rôles de l'administration restent remplies.
             guild: this.connexion?.instantane() ?? this.dernierInstantane,
+            ...(this.o.declarations ? { features: this.o.declarations } : {}),
+            ...(this.o.textes ? { texts: this.o.textes } : {}),
+            ...(curseur !== null ? { events_cursor: curseur } : {}),
         };
     }
 
@@ -217,6 +246,7 @@ export class Superviseur {
             return;
         }
 
+        this.curseur = connexion.curseur;
         this.connexion = null;
         this.changement = true;
 

@@ -2,11 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ErreurConnexion, type Connexion } from './discord.js';
 import { Journal, type EntreeJournal } from './journal.js';
-import { ErreurSite, type ConfigBot, type ReponseSigneDeVie, type SigneDeVie, type Site } from './site.js';
+import { ErreurSite, type CommandeSite, type ConfigBot, type ReponseSigneDeVie, type SigneDeVie, type Site } from './site.js';
 import { Superviseur } from './superviseur.js';
 
 const CONFIG: ConfigBot = { token: 'jeton-discord-1', client_id: '1', guild_id: '2', running: true, nicknames: false, channels: [], roles: [], version: 1, events_cursor: 0, api_token_id: 7 };
-const GUILDE = { id: '2', name: 'Serveur', channels: [{ id: '10', name: 'forum', type: 15 }], roles: [] };
+const GUILDE = { id: '2', name: 'Serveur', channels: [{ id: '10', name: 'forum', type: 15, parent_id: '', tags: [] }], roles: [] };
 
 /** Un faux site : l'administration qu'on règle dans le test, et ce que le bot lui a envoyé. */
 class FauxSite {
@@ -51,6 +51,9 @@ class FausseConnexion implements Connexion {
     fermee = false;
     reconfigurations: ConfigBot[] = [];
     tours = 0;
+    curseur = 0;
+    resynchronisations = 0;
+    executees: CommandeSite[] = [];
 
     constructor(readonly config: ConfigBot) {}
 
@@ -64,6 +67,15 @@ class FausseConnexion implements Connexion {
 
     async tour(): Promise<void> {
         this.tours++;
+        this.curseur += 5;
+    }
+
+    async resynchroniser(): Promise<void> {
+        this.resynchronisations++;
+    }
+
+    async executer(commande: CommandeSite): Promise<void> {
+        this.executees.push(commande);
     }
 
     async fermer(): Promise<void> {
@@ -82,6 +94,8 @@ function monter(ouvrir?: (config: ConfigBot) => Promise<Connexion>) {
         journal,
         version: '0.1.0',
         intervalle: 30,
+        declarations: [],
+        textes: ['Bonjour'],
         ouvrir: ouvrir ?? (async (config) => {
             const c = new FausseConnexion(config);
             connexions.push(c);
@@ -100,7 +114,7 @@ test('en pause : la configuration est lue, rien ne se connecte, le signe de vie 
 
     assert.equal(site.lectures, 1);
     assert.equal(connexions.length, 0);
-    assert.deepEqual(site.signes[0], { version: '0.1.0', connected: false, intents: { members: false, content: false }, guild: null });
+    assert.deepEqual(site.signes[0], { version: '0.1.0', connected: false, intents: { members: false, content: false }, guild: null, features: [], texts: ['Bonjour'] });
 });
 
 test('en marche : la connexion s’ouvre, et le signe de vie suivant décrit le serveur', async () => {
@@ -241,4 +255,45 @@ test('la clé Discord est masquée dans le journal dès qu’elle est connue', a
     await superviseur.tour();
 
     assert.ok(site.lignes.some((l) => l.message === 'erreur qui recopie [masqué]'));
+});
+
+test('« Resynchroniser » et la mise en place passent à la connexion ; sans connexion, ils sont dits ignorés', async () => {
+    const { site, connexions, superviseur } = monter();
+
+    site.reponse = { running: false, version: 1, commands: [{ type: 'resync', data: {} }] };
+    await superviseur.tour();
+    assert.ok(site.lignes.some((l) => l.template === 'Commande « %s » ignorée : le bot n’est pas connecté à Discord.' && l.args[0] === 'resync'));
+
+    site.reponse = { running: true, version: 1, commands: [{ type: 'resync', data: {} }, { type: 'setup', data: { id: '1' } }] };
+    await superviseur.tour();
+
+    assert.equal(connexions[0]?.resynchronisations, 1);
+    assert.deepEqual(connexions[0]?.executees, [{ type: 'setup', data: { id: '1' } }]);
+});
+
+test('un site 1.2.11 qui n’envoie que le nom d’une commande est compris', async () => {
+    const { site, connexions, superviseur } = monter();
+    site.reponse = { running: true, version: 1, commands: [] };
+    await superviseur.tour();
+
+    site.reponse = { running: true, version: 1, commands: ['restart'] };
+    await superviseur.tour();
+
+    assert.equal(connexions.length, 2);
+});
+
+test('le curseur du fil d’événements part au site, et survit à la pause', async () => {
+    const { site, superviseur } = monter();
+    site.reponse = { running: true, version: 1, commands: [] };
+
+    await superviseur.tour();
+    await superviseur.tour();
+    assert.equal(site.signes[1]?.events_cursor, 5);
+
+    site.reponse = { running: false, version: 1, commands: [] };
+    await superviseur.tour();
+    await superviseur.tour();
+
+    assert.equal(site.signes[3]?.connected, false);
+    assert.equal(site.signes[3]?.events_cursor, 10);
 });

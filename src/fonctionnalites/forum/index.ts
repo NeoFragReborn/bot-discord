@@ -20,12 +20,12 @@
 import { ChannelType, Events, GatewayIntentBits, PermissionsBitField, type AnyThreadChannel, type ForumChannel, type GuildMember, type Message, type MessageReaction, type PartialMessage, type PartialMessageReaction, type PartialUser, type User, type Webhook } from 'discord.js';
 import { formater, messageErreur, type Valeur } from '../../journal.js';
 import { ErreurSite, type AuteurDiscord, type Evenement, type MessageForum, type SalonRelie, type Sujet } from '../../site.js';
-import type { Contexte, Fonctionnalite } from '../types.js';
+import { TEXTES } from '../../textes.js';
+import { signature, webhookDuSalon } from '../commun.js';
+import type { Contexte, Fonctionnalite, Reglage } from '../types.js';
+import { correspondancesDuSalon, etiquettesDuFil, memesEtiquettes, prefixeDuFil } from './etiquettes.js';
 import { FileParCle } from './file.js';
-import { discordVersSite, htmlVersMarkdown, nomDeWebhook, tenirDansDiscord } from './markdown.js';
-
-/** Le nom du webhook que le bot crée dans chaque salon relié. */
-const NOM_WEBHOOK = 'NeoFrag Reborn';
+import { discordVersSite, htmlVersMarkdown, tenirDansDiscord } from './markdown.js';
 
 /** Messages d'un fil recopiés au plus quand on le publie à la demande. */
 const FIL_MAX = 500;
@@ -41,23 +41,29 @@ const PERMISSIONS_DU_SALON = [
     ['ManageMessages', PermissionsBitField.Flags.ManageMessages],
 ] as const;
 
-/** Les textes postés sur Discord, traduits par le site ; en français s'il ne les donne pas. */
-const TEXTES_PAR_DEFAUT = {
-    on_site: 'Sur le site',
-    read_more: 'Lire la suite sur le site',
-    published: 'Ce fil est maintenant aussi sur le site : %s',
-};
+/** Fils d'un salon regardés au plus par un rattrapage (les actifs, puis les plus récents des archivés). */
+const RATTRAPAGE_FILS = 50;
+
+/** Messages d'un fil regardés au plus par un rattrapage (les plus récents). */
+const RATTRAPAGE_MESSAGES = 100;
 
 export class SynchroForum implements Fonctionnalite {
     readonly nom = 'forum';
+    readonly titre = 'Forum et salons Forum';
+    readonly description = 'Relie chaque forum du site à un salon Forum de Discord : sujets, réponses, modifications et suppressions passent d’un côté à l’autre.';
+    readonly reglages = [
+        { cle: 'lien_site', type: 'bool', defaut: true, libelle: 'Sous chaque sujet recopié sur Discord, un lien vers le site' },
+        { cle: 'rattrapage', type: 'bool', defaut: true, libelle: 'Au démarrage, rattraper ce qui s’est écrit sur Discord pendant que le bot était éteint' },
+    ] as const satisfies readonly Reglage[];
     readonly intents = [GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMessageReactions] as const;
-    readonly evenements = ['forum.topic.created', 'forum.post.created', 'forum.post.edited', 'forum.post.deleted'] as const;
+    readonly evenements = ['forum.topic.created', 'forum.post.created', 'forum.post.edited', 'forum.post.deleted', 'forum.topic.prefixed'] as const;
 
     private ctx: Contexte | null = null;
     private webhooks = new Map<string, Webhook>();
     private file = new FileParCle();
     private avertis = new Set<string>();
     private retraits: (() => void)[] = [];
+    private salonsDits = -1;
 
     async demarrer(ctx: Contexte): Promise<void> {
         this.ctx = ctx;
@@ -75,7 +81,15 @@ export class SynchroForum implements Fonctionnalite {
             }
         };
 
+        // Une étiquette posée ou retirée sur un fil relié : le préfixe du sujet suit.
+        const surFilModifie = (avant: AnyThreadChannel, apres: AnyThreadChannel) => {
+            if (!memesEtiquettes(avant.appliedTags, apres.appliedTags)) {
+                this.parFil(apres.id, () => this.etiquettesVersSite(apres));
+            }
+        };
+
         client.on(Events.ThreadCreate, surFilCree);
+        client.on(Events.ThreadUpdate, surFilModifie);
         client.on(Events.MessageCreate, surCree);
         client.on(Events.MessageUpdate, surModifie);
         client.on(Events.MessageDelete, surSupprime);
@@ -84,6 +98,7 @@ export class SynchroForum implements Fonctionnalite {
 
         this.retraits = [
             () => client.off(Events.ThreadCreate, surFilCree),
+            () => client.off(Events.ThreadUpdate, surFilModifie),
             () => client.off(Events.MessageCreate, surCree),
             () => client.off(Events.MessageUpdate, surModifie),
             () => client.off(Events.MessageDelete, surSupprime),
@@ -92,6 +107,19 @@ export class SynchroForum implements Fonctionnalite {
         ];
 
         this.verifierSalons(ctx);
+
+        if (ctx.reglages.rattrapage) {
+            // En arrière-plan : le bot ne fait pas attendre ses autres fonctionnalités.
+            void this.rattraper(ctx, false).catch((e: unknown) => this.erreur('Forum : %s', messageErreur(e)));
+        }
+    }
+
+    async resynchroniser(ctx: Contexte): Promise<void> {
+        this.ctx = ctx;
+        this.avertis.clear();
+        this.webhooks.clear();
+        this.verifierSalons(ctx);
+        await this.rattraper(ctx, true);
     }
 
     reconfigurer(ctx: Contexte): void {
@@ -145,6 +173,9 @@ export class SynchroForum implements Fonctionnalite {
             case 'forum.post.deleted':
                 await this.suppressionVersDiscord(ctx, Number(d.message_id), Number(d.topic_id), Boolean(d.is_topic));
                 break;
+            case 'forum.topic.prefixed':
+                await this.prefixeVersDiscord(ctx, Number(d.topic_id), d.prefix_id === null || d.prefix_id === undefined ? null : Number(d.prefix_id));
+                break;
         }
     }
 
@@ -163,11 +194,11 @@ export class SynchroForum implements Fonctionnalite {
             return;
         }
 
-        const textes = this.textes(ctx);
-        const contenu = tenirDansDiscord(htmlVersMarkdown(message.html ?? ''), `-# [${textes.on_site}](<${sujet.url}>)`, `-# [${textes.read_more}](<${message.url}>)`);
+        const contenu = tenirDansDiscord(htmlVersMarkdown(message.html ?? ''), this.finSujet(ctx, sujet), `-# [${ctx.textes.dans(null, TEXTES.lireLaSuite)}](<${message.url}>)`);
         const signature = await this.signature(ctx, message);
         const webhook = await this.webhook(canal);
-        const envoye = await webhook.send({ content: contenu, username: signature.nom, ...(signature.avatar ? { avatarURL: signature.avatar } : {}), threadName: Array.from(sujet.title).slice(0, 100).join(''), allowedMentions: { parse: [] } });
+        const etiquettes = etiquettesDuFil([], correspondancesDuSalon(ctx.config.tags, canal.id), sujet.prefix?.id ?? null);
+        const envoye = await webhook.send({ content: contenu, username: signature.nom, ...(signature.avatar ? { avatarURL: signature.avatar } : {}), threadName: Array.from(sujet.title).slice(0, 100).join(''), ...(etiquettes.length ? { appliedTags: etiquettes } : {}), allowedMentions: { parse: [] } });
 
         await ctx.site.lier('topic', sujetId, envoye.channelId);
         await ctx.site.lier('message', message.id, envoye.id);
@@ -189,7 +220,7 @@ export class SynchroForum implements Fonctionnalite {
             return;
         }
 
-        const contenu = tenirDansDiscord(htmlVersMarkdown(message.html ?? ''), '', `-# [${this.textes(ctx).read_more}](<${message.url}>)`);
+        const contenu = tenirDansDiscord(htmlVersMarkdown(message.html ?? ''), '', `-# [${ctx.textes.dans(null, TEXTES.lireLaSuite)}](<${message.url}>)`);
         const signature = await this.signature(ctx, message);
         const webhook = await this.webhook(canal);
         const envoye = await webhook.send({ content: contenu, username: signature.nom, ...(signature.avatar ? { avatarURL: signature.avatar } : {}), threadId: lienSujet.discord_id, allowedMentions: { parse: [] } });
@@ -217,16 +248,55 @@ export class SynchroForum implements Fonctionnalite {
             return;
         }
 
-        const textes = this.textes(ctx);
         const sujet = ouverture ? await ctx.site.sujet(message.topic_id) : null;
-        const fin = sujet ? `-# [${textes.on_site}](<${sujet.url}>)` : '';
+        const fin = sujet ? this.finSujet(ctx, sujet) : '';
 
-        await webhook.editMessage(lien.discord_id, { content: tenirDansDiscord(htmlVersMarkdown(message.html ?? ''), fin, `-# [${textes.read_more}](<${message.url}>)`), threadId: fil.id });
+        await webhook.editMessage(lien.discord_id, { content: tenirDansDiscord(htmlVersMarkdown(message.html ?? ''), fin, `-# [${ctx.textes.dans(null, TEXTES.lireLaSuite)}](<${message.url}>)`), threadId: fil.id });
 
         const titre = sujet ? Array.from(sujet.title).slice(0, 100).join('') : '';
 
         if (titre && fil.name !== titre) {
             await fil.setName(titre, 'NeoFrag : titre changé sur le site');
+        }
+    }
+
+    /** Le préfixe changé sur le site : l'étiquette du fil suit (les étiquettes libres restent). */
+    private async prefixeVersDiscord(ctx: Contexte, sujetId: number, prefixe: number | null): Promise<void> {
+        const lien = await ctx.site.lien('topic', { siteId: sujetId });
+        const fil = lien ? await this.fil(ctx, lien.discord_id) : null;
+
+        if (!fil || !fil.parentId || !this.salon(ctx, fil.parentId)) {
+            return;
+        }
+
+        const voulues = etiquettesDuFil(fil.appliedTags, correspondancesDuSalon(ctx.config.tags, fil.parentId), prefixe);
+
+        if (!memesEtiquettes(voulues, fil.appliedTags)) {
+            await fil.setAppliedTags(voulues, 'NeoFrag : préfixe changé sur le site');
+        }
+    }
+
+    /** Une étiquette posée ou retirée sur Discord : le préfixe du sujet suit. */
+    private async etiquettesVersSite(fil: AnyThreadChannel): Promise<void> {
+        const ctx = this.ctx;
+
+        if (!ctx || !fil.parentId || !this.salon(ctx, fil.parentId)) {
+            return;
+        }
+
+        const correspondances = correspondancesDuSalon(ctx.config.tags, fil.parentId);
+
+        // Aucune étiquette ne représente de préfixe dans ce salon : rien à reporter.
+        if (!correspondances.versPrefixe.size) {
+            return;
+        }
+
+        const lien = await ctx.site.lien('topic', { discordId: fil.id });
+        const sujet = lien ? await ctx.site.sujet(lien.site_id) : null;
+        const prefixe = prefixeDuFil(fil.appliedTags, correspondances);
+
+        if (sujet && (sujet.prefix?.id ?? null) !== prefixe) {
+            await ctx.site.modifierSujet(sujet.id, prefixe);
         }
     }
 
@@ -425,7 +495,7 @@ export class SynchroForum implements Fonctionnalite {
         }
 
         ctx.journal.info('Forum : le fil « %s » est publié sur le site à la demande de %s (%d réponse(s)).', fil.name, utilisateur.tag, suite.length);
-        await fil.send({ content: formater(this.textes(ctx).published, [`<${sujet.url}>`]), allowedMentions: { parse: [] } }).catch(() => undefined);
+        await fil.send({ content: ctx.textes.dans(null, TEXTES.filPublie, `<${sujet.url}>`), allowedMentions: { parse: [] } }).catch(() => undefined);
     }
 
     private async publierFil(ctx: Contexte, fil: AnyThreadChannel, salon: SalonRelie, ouverture: Message): Promise<Sujet | null> {
@@ -433,7 +503,8 @@ export class SynchroForum implements Fonctionnalite {
             return null;
         }
 
-        const sujet = await ctx.site.creerSujet(salon.forum_id, Array.from(fil.name).slice(0, 100).join(''), this.contenuVersSite(ouverture) || fil.name, this.auteur(ouverture));
+        const prefixe = prefixeDuFil(fil.appliedTags, correspondancesDuSalon(ctx.config.tags, salon.channel_id));
+        const sujet = await ctx.site.creerSujet(salon.forum_id, Array.from(fil.name).slice(0, 100).join(''), this.contenuVersSite(ouverture) || fil.name, this.auteur(ouverture), prefixe ?? undefined);
 
         await ctx.site.lier('topic', sujet.id, fil.id);
 
@@ -446,15 +517,16 @@ export class SynchroForum implements Fonctionnalite {
         return sujet;
     }
 
-    private async publierReponse(ctx: Contexte, sujetId: number, m: Message): Promise<void> {
+    /** Publie une réponse Discord sur le site ; rend vrai si elle y est maintenant (et ne l'était pas). */
+    private async publierReponse(ctx: Contexte, sujetId: number, m: Message): Promise<boolean> {
         if (await ctx.site.lien('message', { discordId: m.id })) {
-            return;
+            return false;
         }
 
         const contenu = this.contenuVersSite(m);
 
         if (!contenu) {
-            return;
+            return false;
         }
 
         const cite = m.reference?.messageId ? await ctx.site.lien('message', { discordId: m.reference.messageId }) : null;
@@ -463,11 +535,13 @@ export class SynchroForum implements Fonctionnalite {
             const reponse = await ctx.site.repondre(sujetId, contenu, this.auteur(m), cite?.site_id);
 
             await ctx.site.lier('message', reponse.id, m.id);
+
+            return true;
         } catch (erreur) {
             if (erreur instanceof ErreurSite && erreur.code === 'topic_locked') {
                 ctx.journal.info('Forum : une réponse de %s n’est pas recopiée, le sujet n° %d est verrouillé sur le site.', m.author.tag, sujetId);
 
-                return;
+                return false;
             }
 
             throw erreur;
@@ -510,30 +584,13 @@ export class SynchroForum implements Fonctionnalite {
         return canal?.isThread() ? canal : null;
     }
 
-    private async webhook(canal: ForumChannel): Promise<Webhook> {
-        const connu = this.webhooks.get(canal.id);
-
-        if (connu) {
-            return connu;
-        }
-
-        const existants = await canal.fetchWebhooks();
-        const webhook = existants.find((w) => w.owner?.id === canal.client.user.id && w.token !== null) ?? (await canal.createWebhook({ name: NOM_WEBHOOK, reason: 'NeoFrag : messages venus du site' }));
-
-        this.webhooks.set(canal.id, webhook);
-
-        return webhook;
+    private webhook(canal: ForumChannel): Promise<Webhook> {
+        return webhookDuSalon(canal, this.webhooks);
     }
 
     /** Le nom et l'avatar sous lesquels un message du site paraît sur Discord. */
-    private async signature(ctx: Contexte, message: MessageForum): Promise<{ nom: string; avatar: string | null }> {
-        if (message.author) {
-            const membre = await ctx.site.membre(message.author.id).catch(() => null);
-
-            return { nom: nomDeWebhook(message.author.username), avatar: membre?.avatar && /^https?:\/\//.test(membre.avatar) ? membre.avatar : null };
-        }
-
-        return { nom: nomDeWebhook(message.external_author?.name ?? ''), avatar: null };
+    private signature(ctx: Contexte, message: MessageForum): Promise<{ nom: string; avatar: string | null }> {
+        return signature(ctx.site, message.author, message.external_author?.name);
     }
 
     private auteur(m: Message): AuteurDiscord {
@@ -545,14 +602,15 @@ export class SynchroForum implements Fonctionnalite {
     }
 
     /** Le compte Discord de l'auteur d'un message du site (quand Discord ne le dit plus : message effacé). */
+    /**
+     * L'auteur Discord d'un message supprimé que le bot n'avait plus en mémoire (après un redémarrage) :
+     * Discord ne dit alors plus qui l'avait écrit. Seul un auteur Discord non lié vient forcément de
+     * Discord ; le message d'un membre peut être la copie d'un message du site, qui doit rester.
+     */
     private async discordDeLAuteur(ctx: Contexte, messageId: number): Promise<string | null> {
         const message = await ctx.site.message(messageId);
 
-        if (message?.external_author?.provider === 'discord') {
-            return message.external_author.external_id;
-        }
-
-        return message?.author ? ((await ctx.site.membre(message.author.id))?.discord?.id ?? null) : null;
+        return message?.external_author?.provider === 'discord' ? message.external_author.external_id : null;
     }
 
     private async toutLeFil(fil: AnyThreadChannel): Promise<Message[]> {
@@ -591,8 +649,83 @@ export class SynchroForum implements Fonctionnalite {
         return true;
     }
 
-    private textes(ctx: Contexte): typeof TEXTES_PAR_DEFAUT {
-        return { ...TEXTES_PAR_DEFAUT, ...(ctx.config.texts ?? {}) };
+    /** Le lien vers le site sous un sujet recopié — sauf si l'administration l'a retiré. */
+    private finSujet(ctx: Contexte, sujet: Sujet): string {
+        return ctx.reglages.lien_site === false ? '' : `-# [${ctx.textes.dans(null, TEXTES.surLeSite)}](<${sujet.url}>)`;
+    }
+
+    /**
+     * Le rattrapage : ce qui s'est écrit sur Discord pendant que le bot était éteint (ou qu'une
+     * fonctionnalité l'était). Les fils d'un salon « tout » qui n'ont pas de sujet sont publiés ; les
+     * réponses récentes d'un fil relié qui manquent au site y sont ajoutées. Le sens site → Discord,
+     * lui, se rattrape tout seul : le bot reprend le fil d'événements là où il l'avait laissé.
+     */
+    private async rattraper(ctx: Contexte, direQuandRien: boolean): Promise<void> {
+        if (!ctx.config.channels.length || !this.lisible(ctx)) {
+            return;
+        }
+
+        let sujets = 0;
+        let reponses = 0;
+        const actifs = await ctx.guilde.channels.fetchActiveThreads().catch(() => null);
+
+        for (const salon of ctx.config.channels) {
+            const canal = this.canal(ctx, salon);
+
+            if (!canal) {
+                continue;
+            }
+
+            const archives = await canal.threads.fetchArchived({ limit: RATTRAPAGE_FILS }).catch(() => null);
+            const fils = [...(actifs?.threads.filter((f) => f.parentId === canal.id).values() ?? []), ...(archives?.threads.values() ?? [])].slice(0, RATTRAPAGE_FILS);
+            const sujetsConnus = await ctx.site.liensConnus('topic', fils.map((f) => f.id));
+
+            for (const fil of fils) {
+                await this.file.ajouter(fil.id, async () => {
+                    const sujetId = sujetsConnus.get(fil.id);
+
+                    if (sujetId === undefined) {
+                        if (salon.mode !== 'all') {
+                            return;
+                        }
+
+                        const ouverture = await fil.fetchStarterMessage().catch(() => null);
+                        const sujet = ouverture ? await this.publierFil(ctx, fil, salon, ouverture) : null;
+
+                        if (!sujet) {
+                            return;
+                        }
+
+                        sujets++;
+                        reponses += await this.publierManquants(ctx, fil, sujet.id, ouverture?.id ?? fil.id);
+
+                        return;
+                    }
+
+                    reponses += await this.publierManquants(ctx, fil, sujetId, fil.id);
+                });
+            }
+        }
+
+        if (sujets + reponses > 0 || direQuandRien) {
+            ctx.journal.info('Forum : rattrapage terminé — %d sujet(s) et %d réponse(s) recopiés sur le site.', sujets, reponses);
+        }
+    }
+
+    /** Les réponses récentes d'un fil qui manquent au site, publiées dans l'ordre ; rend leur nombre. */
+    private async publierManquants(ctx: Contexte, fil: AnyThreadChannel, sujetId: number, ouvertureId: string): Promise<number> {
+        const lot = await fil.messages.fetch({ limit: RATTRAPAGE_MESSAGES }).catch(() => null);
+        const candidats = [...(lot?.values() ?? [])].filter((m) => m.id !== ouvertureId && !m.author.bot && !m.webhookId && !m.system).sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+        const connus = await ctx.site.liensConnus('message', candidats.map((m) => m.id));
+        let publies = 0;
+
+        for (const m of candidats.filter((c) => !connus.has(c.id))) {
+            if (await this.publierReponse(ctx, sujetId, m)) {
+                publies++;
+            }
+        }
+
+        return publies;
     }
 
     /** Ce qui empêche un salon relié de fonctionner, dit une fois par configuration. */
@@ -620,10 +753,13 @@ export class SynchroForum implements Fonctionnalite {
             }
         }
 
-        if (ctx.config.channels.length) {
+        // Le nombre de salons reliés se dit quand il change, pas à chaque réglage touché.
+        if (ctx.config.channels.length && ctx.config.channels.length !== this.salonsDits) {
             ctx.journal.info('Forum : %d salon(s) relié(s) à un forum du site.', ctx.config.channels.length);
             this.lisible(ctx);
         }
+
+        this.salonsDits = ctx.config.channels.length;
     }
 
     private avertir(ctx: Contexte, modele: string, ...args: Valeur[]): void {

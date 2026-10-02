@@ -16,11 +16,9 @@
 import { DiscordAPIError, Events, GatewayIntentBits, PermissionsBitField, type GuildMember } from 'discord.js';
 import { formater, messageErreur, type Valeur } from '../../journal.js';
 import type { Evenement, RoleRelie } from '../../site.js';
-import type { Contexte, Fonctionnalite } from '../types.js';
+import type { Contexte, Fonctionnalite, Reglage } from '../types.js';
 import { planifier } from './plan.js';
 
-/** Tours entre deux synchronisations complètes (un tour ≈ 30 secondes). */
-const TOURS_ENTRE_DEUX_SYNCHROS = 20;
 
 /** Ce qu'une synchronisation a fait, pour une seule ligne de journal. */
 interface Bilan {
@@ -36,11 +34,18 @@ const bilanVide = (): Bilan => ({ membres: 0, donnes: 0, retires: 0, pseudos: 0,
 
 export class RolesEtPseudos implements Fonctionnalite {
     readonly nom = 'roles';
+    readonly titre = 'Rôles et pseudos';
+    readonly description = 'Donne aux membres qui ont lié leur compte Discord les rôles reliés à leurs groupes, et leur pseudo du site s’ils le veulent.';
+    readonly reglages = [
+        { cle: 'pseudos', type: 'bool', defaut: false, libelle: 'Donner aux membres liés leur pseudo du site sur le serveur' },
+        { cle: 'intervalle', type: 'int', defaut: 10, min: 5, max: 120, libelle: 'Minutes entre deux passages sur tous les membres', aide: 'Un changement de groupe est appliqué tout de suite ; ce passage rattrape le reste (un pseudo changé, un compte lié).' },
+    ] as const satisfies readonly Reglage[];
     readonly intents = [GatewayIntentBits.GuildMembers] as const;
-    readonly evenements = ['user.groups.changed'] as const;
+    readonly evenements = ['user.groups.changed', 'user.discord.linked', 'user.discord.unlinked'] as const;
 
     private ctx: Contexte | null = null;
-    private tours = 0;
+    /** Le dernier passage sur tous les membres. */
+    private dernierPassage = 0;
     private enCours: Promise<void> | null = null;
     /** Les avertissements déjà donnés depuis la dernière configuration : ils ne se répètent pas toutes les dix minutes. */
     private avertis = new Set<string>();
@@ -61,22 +66,40 @@ export class RolesEtPseudos implements Fonctionnalite {
     async reconfigurer(ctx: Contexte): Promise<void> {
         this.ctx = ctx;
         this.avertis.clear();
-        await this.toutSynchroniser(ctx, true);
+        // Un réglage touché ailleurs relit la configuration : le bilan ne se dit que s'il a changé quelque chose.
+        await this.toutSynchroniser(ctx, false);
     }
 
     async tour(ctx: Contexte): Promise<void> {
         this.ctx = ctx;
 
-        if (++this.tours >= TOURS_ENTRE_DEUX_SYNCHROS) {
-            this.tours = 0;
+        if (Date.now() - this.dernierPassage >= Number(ctx.reglages.intervalle ?? 10) * 60_000) {
             await this.toutSynchroniser(ctx, false);
         }
+    }
+
+    async resynchroniser(ctx: Contexte): Promise<void> {
+        this.ctx = ctx;
+        this.avertis.clear();
+        await this.toutSynchroniser(ctx, true);
     }
 
     async surEvenement(ctx: Contexte, evenement: Evenement): Promise<void> {
         const id = Number(evenement.data.user_id);
 
         if (!Number.isInteger(id) || id <= 0 || !this.actif(ctx)) {
+            return;
+        }
+
+        // Délié : le site ne fait plus foi pour ce compte Discord, les rôles qu'il lui avait donnés partent.
+        if (evenement.type === 'user.discord.unlinked') {
+            const discordId = String(evenement.data.discord_id ?? '');
+            const discord = /^\d+$/.test(discordId) ? await ctx.guilde.members.fetch(discordId).catch(() => null) : null;
+
+            if (discord) {
+                await this.unMembre(ctx, [], '', discord);
+            }
+
             return;
         }
 
@@ -121,7 +144,7 @@ export class RolesEtPseudos implements Fonctionnalite {
 
     /** Il y a quelque chose à synchroniser, et le bot en a les moyens. */
     private actif(ctx: Contexte): boolean {
-        if (!ctx.config.roles.length && !ctx.config.nicknames) {
+        if (!ctx.config.roles.length && !ctx.reglages.pseudos) {
             return false;
         }
 
@@ -144,6 +167,8 @@ export class RolesEtPseudos implements Fonctionnalite {
     }
 
     private async synchroniserTous(ctx: Contexte, direQuandRien: boolean): Promise<void> {
+        this.dernierPassage = Date.now();
+
         if (!this.actif(ctx)) {
             return;
         }
@@ -197,7 +222,7 @@ export class RolesEtPseudos implements Fonctionnalite {
             roles: new Set(discord.roles.cache.keys()),
             pseudo: discord.nickname,
             proprietaire: discord.id === ctx.guilde.ownerId,
-        }, correspondances, ctx.config.nicknames);
+        }, correspondances, Boolean(ctx.reglages.pseudos));
 
         try {
             if (plan.ajouter.length) {

@@ -4,6 +4,32 @@ Le bot a ses propres numéros de version, indépendants de ceux de NeoFrag Rebor
 la version du site qu'elle demande. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et les numéros le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.2.0] — 2026-10-02
+
+Demande NeoFrag Reborn **1.2.12** ou plus récent. Après la mise à jour, crée une nouvelle clé d'accès
+dans l'administration du site (*Discord → Clé d'accès du bot*) : elle porte les droits du Bugtracker.
+
+### Ajouté
+
+- **Des fonctionnalités qui s'allument une à une.** Le bot déclare ce qu'il sait faire ; *Discord →
+  Fonctionnalités* les liste, et chacune s'allume, s'éteint et se règle depuis l'administration,
+  appliquée dans la minute sans redémarrer. **Resynchroniser** remet tout d'accord, et le forum rattrape
+  au démarrage ce qui s'est écrit sur Discord pendant une absence du bot.
+- **La mise en place du serveur.** Depuis l'administration, le bot crée sur Discord une catégorie, un
+  salon Forum par forum choisi (ses préfixes en étiquettes) et un rôle par groupe, pose les
+  correspondances lui-même, et reprend au lieu de dédoubler ce qui existe déjà. Un aperçu précède, et
+  la dernière mise en place s'annule.
+- **`/forum`.** `/forum account link` relie son compte Discord à son compte du site par un lien à usage
+  unique ; `/forum account unlink` le délie. Sans compte relié, `/forum visibility` choisit comment on
+  paraît sur le forum : son pseudo Discord, un nom anonyme, ou un pseudo choisi.
+- **Préfixes du forum ↔ étiquettes des salons Forum**, dans les deux sens.
+- **Le Bugtracker dans un salon Forum.** Chaque ticket devient un fil, son type et son statut en sont
+  les étiquettes ; les commentaires passent dans les deux sens ; `/bug` et `/idee` ouvrent un ticket
+  depuis Discord, et un fil ouvert à la main dans le salon devient un ticket.
+- **Les rôles temporaires.** `/role` donne un rôle à un membre pour une durée, le retire ou montre ceux
+  en cours ; le bot le retire à l'échéance, même après un redémarrage, et le redonne à qui quitte puis
+  rejoint le serveur pour y échapper.
+
 ## [0.1.0] — 2026-10-01
 
 Demande NeoFrag Reborn **1.2.11** ou plus récent.

@@ -6,12 +6,13 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { ConnexionDiscord } from './discord.js';
+import { ConnexionDiscord, declarer } from './discord.js';
 import { ErreurEnvironnement, lireEnvironnement } from './environnement.js';
 import { fonctionnalites } from './fonctionnalites/index.js';
 import { Journal, messageErreur } from './journal.js';
 import { Site } from './site.js';
 import { Superviseur } from './superviseur.js';
+import { TEXTES } from './textes.js';
 
 const version = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
@@ -34,6 +35,8 @@ const superviseur = new Superviseur({
     version,
     intervalle: environnement.intervalle,
     ouvrir: (config) => ConnexionDiscord.ouvrir(config, site, journal, fonctionnalites()),
+    declarations: declarer(fonctionnalites()),
+    textes: Object.values(TEXTES),
 });
 
 process.on('unhandledRejection', (erreur) => journal.error('Erreur inattendue : %s', messageErreur(erreur)));

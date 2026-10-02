@@ -1,13 +1,18 @@
 /**
  * La connexion à Discord : ouverte quand l'interrupteur de l'administration est sur « marche »,
- * fermée en pause. Elle démarre les fonctionnalités quand le bot est sur le serveur du site.
+ * fermée en pause. Quand le bot est sur le serveur du site, elle démarre les fonctionnalités
+ * allumées, tient leurs commandes Discord à jour, leur passe les événements du site, et exécute les
+ * commandes de l'administration (resynchroniser, mettre en place le serveur).
  */
 
-import { Client, Events, Partials, PermissionsBitField, REST, Routes, type APIApplication, type Guild } from 'discord.js';
-import type { Fonctionnalite, Contexte } from './fonctionnalites/types.js';
+import { ChannelType, Client, Events, Partials, PermissionsBitField, REST, Routes, type APIApplication, type Guild, type Interaction, type RESTPostAPIChatInputApplicationCommandsJSONBody } from 'discord.js';
+import type { Contexte, Fonctionnalite, Valeurs } from './fonctionnalites/types.js';
+import { Textes } from './i18n.js';
 import { intentsDemandes, intentsPermis, type IntentsPermis } from './intents.js';
 import { formater, messageErreur, type Journal, type Valeur } from './journal.js';
-import type { ConfigBot, InstantaneGuilde, Site } from './site.js';
+import { executerMiseEnPlace } from './mise-en-place.js';
+import type { CommandeSite, ConfigBot, DeclarationFonctionnalite, InstantaneGuilde, Site } from './site.js';
+import { TEXTES } from './textes.js';
 
 /**
  * Les permissions que le bot demande sur le serveur — et rien de plus : pas « Administrateur ».
@@ -15,6 +20,8 @@ import type { ConfigBot, InstantaneGuilde, Site } from './site.js';
  */
 export const PERMISSIONS_DU_BOT = [
     PermissionsBitField.Flags.ViewChannel,
+    // La mise en place du serveur crée des salons Forum et règle leurs étiquettes.
+    PermissionsBitField.Flags.ManageChannels,
     PermissionsBitField.Flags.SendMessages,
     PermissionsBitField.Flags.SendMessagesInThreads,
     PermissionsBitField.Flags.CreatePublicThreads,
@@ -35,6 +42,36 @@ export function lienInvitation(clientId: string): string {
     const permissions = new PermissionsBitField([...PERMISSIONS_DU_BOT]).bitfield.toString();
 
     return `https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(clientId)}&scope=bot%20applications.commands&permissions=${permissions}`;
+}
+
+/** Ce que le bot déclare de ses fonctionnalités au site (cf. `Fonctionnalite`). */
+export function declarer(fonctionnalites: readonly Fonctionnalite[]): DeclarationFonctionnalite[] {
+    return fonctionnalites.map((f) => ({
+        nom: f.nom,
+        titre: f.titre,
+        description: f.description,
+        defaut: f.defaut ?? true,
+        reglages: (f.reglages ?? []).map((r) => ({ ...r })),
+    }));
+}
+
+/** Allumée dans l'administration, sinon selon ce qu'elle déclare. */
+export function estActive(f: Fonctionnalite, config: ConfigBot): boolean {
+    return config.features?.[f.nom]?.enabled ?? f.defaut ?? true;
+}
+
+/** Ses réglages : la valeur choisie dans l'administration, sinon celle qu'elle a déclarée. */
+export function reglagesDe(f: Fonctionnalite, config: ConfigBot): Valeurs {
+    const choisis = config.features?.[f.nom]?.settings ?? {};
+    const valeurs: Record<string, string | number | boolean | null> = {};
+
+    for (const r of f.reglages ?? []) {
+        const choisi = choisis[r.cle];
+
+        valeurs[r.cle] = choisi === undefined || choisi === null ? r.defaut : choisi;
+    }
+
+    return valeurs;
 }
 
 /**
@@ -59,9 +96,15 @@ export class ErreurConnexion extends Error {
 export interface Connexion {
     readonly prete: boolean;
     readonly intents: IntentsPermis;
+    /** Le dernier événement du site traité. */
+    readonly curseur: number;
     instantane(): InstantaneGuilde | null;
     reconfigurer(config: ConfigBot): Promise<void>;
     tour(): Promise<void>;
+    /** « Resynchroniser » : chaque fonctionnalité allumée remet tout d'accord. */
+    resynchroniser(): Promise<void>;
+    /** Une commande de l'administration autre que marche, pause et redémarrage. */
+    executer(commande: CommandeSite): Promise<void>;
     fermer(): Promise<void>;
 }
 
@@ -73,7 +116,10 @@ export class ConnexionDiscord implements Connexion {
     private demarrees: Fonctionnalite[] = [];
     private ouverte = true;
     /** Le dernier événement du site lu. */
-    private curseur: number;
+    curseur: number;
+    /** À qui appartient chaque commande Discord, et ce qui a été envoyé à Discord en dernier. */
+    private proprietaires = new Map<string, Fonctionnalite>();
+    private empreinteCommandes = '';
 
     private constructor(
         private readonly client: Client<true>,
@@ -172,6 +218,7 @@ export class ConnexionDiscord implements Connexion {
                 void connexion.rejoindre(guilde);
             }
         });
+        connecte.on(Events.InteractionCreate, (interaction) => void connexion.interaction(interaction));
 
         journal.info('Connecté à Discord : %s.', connecte.user.tag);
 
@@ -203,7 +250,13 @@ export class ConnexionDiscord implements Connexion {
             channels: [...guilde.channels.cache.values()]
                 .filter((salon) => !salon.isThread())
                 .sort((a, b) => ('rawPosition' in a ? a.rawPosition : 0) - ('rawPosition' in b ? b.rawPosition : 0))
-                .map((salon) => ({ id: salon.id, name: salon.name, type: salon.type })),
+                .map((salon) => ({
+                    id: salon.id,
+                    name: salon.name,
+                    type: salon.type,
+                    parent_id: salon.parentId ?? '',
+                    tags: salon.type === ChannelType.GuildForum ? salon.availableTags.map((t) => ({ id: t.id, name: t.name })) : [],
+                })),
             roles: [...guilde.roles.cache.values()]
                 .sort((a, b) => b.position - a.position)
                 .map((role) => ({ id: role.id, name: role.name, managed: role.managed })),
@@ -213,28 +266,71 @@ export class ConnexionDiscord implements Connexion {
     async reconfigurer(config: ConfigBot): Promise<void> {
         this.config = config;
 
-        for (const f of this.demarrees) {
-            await this.prudemment(f, 'reconfigurer', () => f.reconfigurer?.(this.contexte()));
+        if (!this.guilde) {
+            return;
         }
+
+        // Ce que l'administration a éteint s'arrête, ce qu'elle a allumé démarre, le reste se relit.
+        for (const f of [...this.demarrees]) {
+            if (!estActive(f, config)) {
+                await this.prudemment(f, 'arrêt', () => f.arreter?.());
+                this.demarrees = this.demarrees.filter((d) => d !== f);
+                this.journal.info('Fonctionnalité « %s » éteinte depuis l’administration.', f.nom);
+            } else {
+                await this.prudemment(f, 'reconfigurer', () => f.reconfigurer?.(this.contexte(f)));
+            }
+        }
+
+        for (const f of this.fonctionnalites) {
+            if (estActive(f, config) && !this.demarrees.includes(f) && (await this.prudemment(f, 'démarrage', () => f.demarrer(this.contexte(f))))) {
+                this.demarrees.push(f);
+                this.journal.info('Fonctionnalité « %s » allumée depuis l’administration.', f.nom);
+            }
+        }
+
+        await this.enregistrerCommandes();
     }
 
     async tour(): Promise<void> {
         await this.lireEvenements();
 
         for (const f of this.demarrees) {
-            await this.prudemment(f, 'tour', () => f.tour?.(this.contexte()));
+            await this.prudemment(f, 'tour', () => f.tour?.(this.contexte(f)));
         }
+    }
+
+    async resynchroniser(): Promise<void> {
+        for (const f of this.demarrees) {
+            await this.prudemment(f, 'resynchronisation', () => f.resynchroniser?.(this.contexte(f)));
+        }
+    }
+
+    async executer(commande: CommandeSite): Promise<void> {
+        if (!this.guilde) {
+            this.journal.warn('Commande « %s » ignorée : le bot n’est pas encore sur le serveur.', commande.type);
+
+            return;
+        }
+
+        if (commande.type === 'setup' || commande.type === 'setup-undo') {
+            try {
+                await executerMiseEnPlace(commande, { guilde: this.guilde, site: this.site, journal: this.journal, config: this.config });
+            } catch (erreur) {
+                this.journal.error('Mise en place du serveur : %s', messageErreur(erreur));
+            }
+
+            return;
+        }
+
+        this.journal.warn('Commande « %s » inconnue de cette version du bot.', commande.type);
     }
 
     /** Lit le fil d'événements du site depuis le curseur, et passe à chaque fonctionnalité ceux qu'elle suit. */
     private async lireEvenements(): Promise<void> {
         const abonnees = this.demarrees.filter((f) => f.evenements?.length && f.surEvenement);
 
-        if (!abonnees.length) {
-            return;
-        }
-
-        // Cinq pages de cent au plus par tour : le reste attend le tour suivant.
+        // Rien ne suit le fil : le curseur avance quand même, pour qu'une fonctionnalité allumée plus
+        // tard ne reçoive pas des semaines d'événements d'un coup.
         for (let page = 0; page < 5; page++) {
             let lot;
 
@@ -249,7 +345,7 @@ export class ConnexionDiscord implements Connexion {
             for (const evenement of lot.events) {
                 for (const f of abonnees) {
                     if (f.evenements?.includes(evenement.type)) {
-                        await this.prudemment(f, `événement ${evenement.type}`, () => f.surEvenement?.(this.contexte(), evenement));
+                        await this.prudemment(f, `événement ${evenement.type}`, () => f.surEvenement?.(this.contexte(f), evenement));
                     }
                 }
             }
@@ -278,21 +374,103 @@ export class ConnexionDiscord implements Connexion {
 
     private async rejoindre(guilde: Guild): Promise<void> {
         this.guilde = guilde;
-        this.journal.info('Serveur « %s » rejoint : %d fonctionnalité(s) à démarrer.', guilde.name, this.fonctionnalites.length);
 
-        for (const f of this.fonctionnalites) {
-            if (await this.prudemment(f, 'démarrage', () => f.demarrer(this.contexte()))) {
+        const actives = this.fonctionnalites.filter((f) => estActive(f, this.config));
+
+        this.journal.info('Serveur « %s » rejoint : %d fonctionnalité(s) à démarrer.', guilde.name, actives.length);
+
+        for (const f of actives) {
+            if (await this.prudemment(f, 'démarrage', () => f.demarrer(this.contexte(f)))) {
                 this.demarrees.push(f);
+            }
+        }
+
+        await this.enregistrerCommandes();
+    }
+
+    /** Les commandes Discord des fonctionnalités allumées, envoyées au serveur quand elles changent. */
+    private async enregistrerCommandes(): Promise<void> {
+        if (!this.guilde) {
+            return;
+        }
+
+        const textes = this.textes();
+        const proprietaires = new Map<string, Fonctionnalite>();
+        const corps: RESTPostAPIChatInputApplicationCommandsJSONBody[] = [];
+
+        for (const f of this.demarrees) {
+            for (const commande of f.commandes?.(textes) ?? []) {
+                proprietaires.set(commande.name, f);
+                corps.push(commande);
+            }
+        }
+
+        this.proprietaires = proprietaires;
+
+        const empreinte = JSON.stringify(corps);
+
+        if (empreinte === this.empreinteCommandes) {
+            return;
+        }
+
+        try {
+            await this.guilde.commands.set(corps);
+            this.empreinteCommandes = empreinte;
+            this.journal.info('Commandes Discord à jour : %d commande(s).', corps.length);
+        } catch (erreur) {
+            this.journal.error('Commandes Discord non enregistrées : %s', messageErreur(erreur));
+        }
+    }
+
+    /** Une commande, un bouton ou une fenêtre : à la fonctionnalité à qui il appartient. */
+    private async interaction(interaction: Interaction): Promise<void> {
+        if (!this.guilde || interaction.guildId !== this.guilde.id) {
+            return;
+        }
+
+        let f: Fonctionnalite | undefined;
+
+        if (interaction.isChatInputCommand()) {
+            f = this.proprietaires.get(interaction.commandName);
+        } else if ('customId' in interaction && typeof interaction.customId === 'string') {
+            const nom = interaction.customId.split(':')[0];
+
+            f = this.demarrees.find((d) => d.nom === nom);
+        }
+
+        if (!f) {
+            return;
+        }
+
+        const fonctionnalite = f;
+
+        try {
+            if (interaction.isChatInputCommand()) {
+                await fonctionnalite.surCommande?.(this.contexte(fonctionnalite), interaction);
+            } else {
+                await fonctionnalite.surInteraction?.(this.contexte(fonctionnalite), interaction);
+            }
+        } catch (erreur) {
+            this.journal.error('Fonctionnalité « %s » (%s) : %s', fonctionnalite.nom, 'commande', messageErreur(erreur));
+
+            if (interaction.isRepliable()) {
+                const contenu = { content: this.textes().dans(interaction.locale, TEXTES.erreurCommande), ephemeral: true };
+
+                await (interaction.replied || interaction.deferred ? interaction.followUp(contenu) : interaction.reply(contenu)).catch(() => undefined);
             }
         }
     }
 
-    private contexte(): Contexte {
+    private textes(): Textes {
+        return new Textes(this.config.i18n ?? {}, this.config.lang ?? 'fr');
+    }
+
+    private contexte(f: Fonctionnalite): Contexte {
         if (!this.guilde) {
             throw new Error('serveur Discord pas encore rejoint');
         }
 
-        return { client: this.client, guilde: this.guilde, site: this.site, journal: this.journal, config: this.config, intents: this.intents };
+        return { client: this.client, guilde: this.guilde, site: this.site, journal: this.journal, config: this.config, intents: this.intents, reglages: reglagesDe(f, this.config), textes: this.textes() };
     }
 
     /** Une fonctionnalité qui échoue l'écrit au journal, sans emporter le bot ni les autres. */
