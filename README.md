@@ -9,8 +9,9 @@ chiffrée), le serveur, l'interrupteur marche / pause, le redémarrage, les corr
 forums et groupes ↔ rôles. Le bot y affiche son état et son journal. Sur sa machine, il ne garde que
 deux lignes : l'adresse du site et sa clé d'accès.
 
-Le mode d'emploi complet — créer l'application Discord, l'inviter, installer le bot, écrire une
-fonctionnalité — est dans le wiki du site, guide « Le bot Discord ».
+Le mode d'emploi complet — créer l'application Discord, l'inviter, installer le bot, le mettre à jour —
+est le guide « Le bot Discord » de la documentation de NeoFrag Reborn, que tout site muni du module
+Wiki publie aussi dans son wiki.
 
 ## En bref
 
@@ -23,11 +24,8 @@ npm start
 
 Pour qu'il tourne en service : `neofrag-bot.service` (systemd), qui explique son installation.
 
-## Développer
+- Ce qui change d'une version à l'autre, et la version du site que chacune demande : `CHANGELOG.md`.
+- Écrire une fonctionnalité, lancer les tests : `CONTRIBUTING.md`.
 
-- Node.js 22.9 ou plus, TypeScript, [discord.js](https://discord.js.org/).
-- `npm test` compile et lance les tests (`src/**/*.test.ts`, lanceur intégré de Node).
-- Une fonctionnalité est un dossier de `src/fonctionnalites/`, inscrit dans
-  `src/fonctionnalites/index.ts` ; son contrat est dans `src/fonctionnalites/types.ts`.
-
-Licence : LGPL-3.0, comme NeoFrag Reborn.
+Licence : LGPL-3.0 ou ultérieure (`COPYING`, `COPYING.LESSER`), comme NeoFrag Reborn. Les bibliothèques
+qu'il emploie, et leurs licences : `NOTICE`.

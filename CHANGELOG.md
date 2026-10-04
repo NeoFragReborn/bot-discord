@@ -4,6 +4,18 @@ Le bot a ses propres numéros de version, indépendants de ceux de NeoFrag Rebor
 la version du site qu'elle demande. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et les numéros le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.2.1] — 2026-10-04
+
+Demande NeoFrag Reborn **1.2.12** ou plus récent, comme la 0.2.0. Rien ne change dans le fonctionnement du
+bot : il devient un projet à part entière, publié dans son propre dépôt.
+
+### Modifié
+- Sa licence est livrée avec lui (LGPL-3.0 ou ultérieure : `COPYING`, `COPYING.LESSER`), avec une `NOTICE`
+  qui nomme les paquets npm qu'il emploie et leurs licences, un guide du contributeur et ce journal.
+- Ses tests lisent son contrat avec le site (`contrat-du-site.json` : les permissions Discord qu'il
+  demande et les textes traduits qu'il affiche) : ils jugent seuls, sans le code du site.
+- L'exemple de service systemd et `.env.example` emploient des chemins et une adresse d'exemple.
+
 ## [0.2.0] — 2026-10-02
 
 Demande NeoFrag Reborn **1.2.12** ou plus récent. Après la mise à jour, crée une nouvelle clé d'accès

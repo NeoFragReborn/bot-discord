@@ -1,0 +1,51 @@
+# Le service systemd du bot Discord de NeoFrag Reborn.
+#
+# Installation (en root, le bot étant dans /srv/neofrag-bot) :
+#   useradd --system --home-dir /srv/neofrag-bot --shell /usr/sbin/nologin neofrag-bot
+#   install -d -m 700 /etc/neofrag-bot && cp .env.example /etc/neofrag-bot/bot.env   # puis le remplir
+#   chmod 600 /etc/neofrag-bot/bot.env
+#   cp neofrag-bot.service /etc/systemd/system/ && systemctl daemon-reload
+#   systemctl enable --now neofrag-bot
+# Le journal : journalctl -u neofrag-bot -f — et dans l'administration du site (Discord).
+
+[Unit]
+Description=Bot Discord de NeoFrag Reborn
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=neofrag-bot
+Group=neofrag-bot
+WorkingDirectory=/srv/neofrag-bot
+# Lu par systemd avant de lâcher ses droits : le fichier reste lisible par root seul.
+EnvironmentFile=/etc/neofrag-bot/bot.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=10
+# 78 : configuration absente ou fausse. Relancer n'y changerait rien.
+RestartPreventExitStatus=78
+
+# Durcissement : le bot n'a besoin que du réseau et de lire son propre dossier.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

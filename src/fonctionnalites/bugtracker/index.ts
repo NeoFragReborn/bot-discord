@@ -1,5 +1,5 @@
 /**
- * Bugtracker ↔ salon Forum de Discord (point 7, d'après un autre projet).
+ * Bugtracker ↔ salon Forum de Discord.
  *
  * Le Bugtracker reste la seule source. Chaque ticket a son fil dans le salon choisi (réglage
  * « salon ») : son type et son statut en sont les étiquettes, que le bot tient à jour quand le

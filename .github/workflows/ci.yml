@@ -1,0 +1,39 @@
+name: CI
+
+# Le bot sur la version de Node la plus ancienne qu'il accepte (package.json, « engines ») et sur la
+# version longue durée suivante : ce qui passe ici passe sur les machines des administrateurs. Ses tests
+# lisent son contrat avec le site (contrat-du-site.json) : ils jugent seuls, sans le dépôt du CMS.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.9', '24']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+      - name: Compilation TypeScript et tests
+        run: npm test
+      - name: npm audit (dépendances de production)
+        run: npm audit --omit=dev --audit-level=high

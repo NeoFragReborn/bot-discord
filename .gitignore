@@ -1,0 +1,5 @@
+# Ses dépendances et sa compilation se refont par `npm ci && npm run build` ; son `.env` porte sa clé
+# d'accès au site, en clair : il ne se versionne jamais.
+/node_modules
+/dist
+/.env
