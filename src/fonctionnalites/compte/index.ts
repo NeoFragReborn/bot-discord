@@ -11,7 +11,7 @@
  * Toutes les réponses sont privées (seul le membre les voit), dans sa langue Discord.
  */
 
-import { ActionRowBuilder, ApplicationCommandOptionType, ButtonBuilder, ButtonStyle, type APIApplicationCommandBasicOption, type APIApplicationCommandSubcommandOption, type ChatInputCommandInteraction, type RESTPostAPIChatInputApplicationCommandsJSONBody } from 'discord.js';
+import { ActionRowBuilder, ApplicationCommandOptionType, ButtonBuilder, ButtonStyle, MessageFlags, type APIApplicationCommandBasicOption, type APIApplicationCommandSubcommandOption, type ChatInputCommandInteraction, type RESTPostAPIChatInputApplicationCommandsJSONBody } from 'discord.js';
 import type { Textes } from '../../i18n.js';
 import { messageErreur } from '../../journal.js';
 import { ErreurSite, type EtatIdentite } from '../../site.js';
@@ -76,7 +76,7 @@ export class CompteEtApparence implements Fonctionnalite {
         };
 
         // Le site peut mettre un instant à répondre : Discord attend au plus trois secondes une première réponse.
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             if (groupe === 'account' && sous === 'link') {

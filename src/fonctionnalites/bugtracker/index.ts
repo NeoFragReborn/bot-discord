@@ -8,7 +8,7 @@
  * description), ou en ouvrant un fil dans le salon — au nom du membre qui a lié son compte.
  */
 
-import { ActionRowBuilder, ChannelType, Events, GatewayIntentBits, ModalBuilder, TextInputBuilder, TextInputStyle, type AnyThreadChannel, type ChatInputCommandInteraction, type ForumChannel, type Interaction, type Message, type PartialMessage, type RESTPostAPIChatInputApplicationCommandsJSONBody, type Webhook } from 'discord.js';
+import { ActionRowBuilder, ChannelType, Events, GatewayIntentBits, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, type AnyThreadChannel, type ChatInputCommandInteraction, type ForumChannel, type Interaction, type Message, type PartialMessage, type RESTPostAPIChatInputApplicationCommandsJSONBody, type Webhook } from 'discord.js';
 import type { Textes } from '../../i18n.js';
 import { formater, messageErreur, type Valeur } from '../../journal.js';
 import { ErreurSite, type AuteurDiscord, type Evenement, type Ticket } from '../../site.js';
@@ -162,7 +162,7 @@ export class SynchroBugtracker implements Fonctionnalite {
         const type: Ticket['type'] = interaction.customId === 'bugtracker:feature' ? 'feature' : 'bug';
         const t = (modele: string, ...args: Valeur[]) => ctx.textes.dans(interaction.locale, modele, ...args);
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             const ticket = await ctx.site.ouvrirTicket(interaction.fields.getTextInputValue('titre'), interaction.fields.getTextInputValue('description'), type, this.auteurDe(interaction.user.id, interaction.inCachedGuild() ? interaction.member.displayName : interaction.user.username, interaction.user.displayAvatarURL({ extension: 'png', size: 128 })));

@@ -5,7 +5,7 @@
  * commandes de l'administration (resynchroniser, mettre en place le serveur).
  */
 
-import { ChannelType, Client, Events, Partials, PermissionsBitField, REST, Routes, type APIApplication, type Guild, type Interaction, type RESTPostAPIChatInputApplicationCommandsJSONBody } from 'discord.js';
+import { ChannelType, Client, Events, MessageFlags, Partials, PermissionsBitField, REST, Routes, type APIApplication, type Guild, type Interaction, type RESTPostAPIChatInputApplicationCommandsJSONBody } from 'discord.js';
 import type { Contexte, Fonctionnalite, Valeurs } from './fonctionnalites/types.js';
 import { Textes } from './i18n.js';
 import { intentsDemandes, intentsPermis, type IntentsPermis } from './intents.js';
@@ -454,7 +454,7 @@ export class ConnexionDiscord implements Connexion {
             this.journal.error('Fonctionnalité « %s » (%s) : %s', fonctionnalite.nom, 'commande', messageErreur(erreur));
 
             if (interaction.isRepliable()) {
-                const contenu = { content: this.textes().dans(interaction.locale, TEXTES.erreurCommande), ephemeral: true };
+                const contenu = { content: this.textes().dans(interaction.locale, TEXTES.erreurCommande), flags: MessageFlags.Ephemeral as const };
 
                 await (interaction.replied || interaction.deferred ? interaction.followUp(contenu) : interaction.reply(contenu)).catch(() => undefined);
             }

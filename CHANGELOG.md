@@ -4,6 +4,16 @@ Le bot a ses propres numéros de version, indépendants de ceux de NeoFrag Rebor
 la version du site qu'elle demande. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et les numéros le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.2.3] — 2026-10-04
+
+Demande NeoFrag Reborn **1.2.12** ou plus récent, comme la 0.2.2.
+
+### Corrigé
+- **Plus d'avertissement de discord.js à chaque réponse privée** (« Supplying "ephemeral" for interaction
+  response options is deprecated ») : les réponses que seul l'auteur de la commande voit — `/forum`,
+  `/bug`, `/idee`, `/role` et le message d'erreur d'une commande — passent par le drapeau
+  `MessageFlags.Ephemeral`. Rien ne change pour les membres. Vu dans le journal du bot du site officiel.
+
 ## [0.2.2] — 2026-10-04
 
 Demande NeoFrag Reborn **1.2.12** ou plus récent, comme la 0.2.1.

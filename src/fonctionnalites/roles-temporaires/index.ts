@@ -15,7 +15,7 @@
  * membre qui quitte puis rejoint le serveur avant la fin, si l'option est cochée.
  */
 
-import { ApplicationCommandOptionType, Events, GatewayIntentBits, PermissionFlagsBits, type ChatInputCommandInteraction, type GuildMember, type RESTPostAPIChatInputApplicationCommandsJSONBody, type User } from 'discord.js';
+import { ApplicationCommandOptionType, Events, GatewayIntentBits, MessageFlags, PermissionFlagsBits, type ChatInputCommandInteraction, type GuildMember, type RESTPostAPIChatInputApplicationCommandsJSONBody, type User } from 'discord.js';
 import type { Textes } from '../../i18n.js';
 import { formater, messageErreur, type Valeur } from '../../journal.js';
 import { ErreurSite } from '../../site.js';
@@ -136,7 +136,7 @@ export class RolesTemporaires implements Fonctionnalite {
     async surCommande(ctx: Contexte, interaction: ChatInputCommandInteraction): Promise<void> {
         const t: Traduire = (modele, ...args) => ctx.textes.dans(interaction.locale, modele, ...args);
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             const sous = interaction.options.getSubcommand(true);
