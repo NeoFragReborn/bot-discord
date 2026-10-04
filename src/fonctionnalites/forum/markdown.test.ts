@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIMITE_DISCORD, decoderEntites, discordVersSite, htmlVersMarkdown, nomDeWebhook, tenirDansDiscord } from './markdown.js';
+import { LIMITE_DISCORD, decoderEntites, discordVersSite, htmlVersMarkdown, nomDeWebhook, sansBalises, tenirDansDiscord } from './markdown.js';
 
 test('les mises en forme courantes passent en Markdown', () => {
     assert.equal(htmlVersMarkdown('<p>Un <strong>gras</strong>, un <em>italique</em>, un <u>souligné</u> et un <s>barré</s>.</p>'), 'Un **gras**, un *italique*, un __souligné__ et un ~~barré~~.');
@@ -57,4 +57,10 @@ test('un nom de webhook est accepté par Discord', () => {
     assert.equal(nomDeWebhook('  '), 'Visiteur');
     assert.equal(nomDeWebhook('Fan de Discord'), 'Fan de Disc​ord');
     assert.equal(Array.from(nomDeWebhook('x'.repeat(200))).length, 80);
+});
+
+test('les balises imbriquées disparaissent toutes, en un seul appel', () => {
+    assert.equal(sansBalises('<scr<b>ipt>alert(1)</scr</b>ipt>'), 'alert(1)');
+    assert.equal(sansBalises('a<<b>i>b</<b>i>c'), 'abc');
+    assert.equal(htmlVersMarkdown('<p>avant <scr<b>ipt>x</scr</b>ipt> après</p>'), 'avant x après');
 });

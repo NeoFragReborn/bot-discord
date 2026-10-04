@@ -4,6 +4,20 @@ Le bot a ses propres numéros de version, indépendants de ceux de NeoFrag Rebor
 la version du site qu'elle demande. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et les numéros le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.2.2] — 2026-10-04
+
+Demande NeoFrag Reborn **1.2.12** ou plus récent, comme la 0.2.1.
+
+### Corrigé
+- **Les messages du forum passés à Discord perdent toutes leurs balises HTML**, même imbriquées
+  (`<scr<b>ipt>`) : un seul passage en laissait reparaître. Discord n'interprète pas le HTML — rien ne s'y
+  exécutait —, mais le reste d'une balise s'affichait dans le message. Relevé par l'analyse de code de
+  GitHub à l'ouverture des dépôts.
+
+### Modifié
+- Le dépôt garde ses fins de ligne en LF (`.gitattributes`) : un clone sous Windows ne passe plus tout le
+  code en CRLF.
+
 ## [0.2.1] — 2026-10-04
 
 Demande NeoFrag Reborn **1.2.12** ou plus récent, comme la 0.2.0. Rien ne change dans le fonctionnement du

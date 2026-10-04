@@ -1,0 +1,3 @@
+# Fins de ligne : le dépôt stocke en LF, quelle que soit la plateforme du contributeur. Sans ce fichier,
+# un clone sous Windows réglé en autocrlf passait tout le code en CRLF (relevé à l'ouverture, 2026-10-04).
+* text=auto eol=lf

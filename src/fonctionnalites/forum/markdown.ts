@@ -27,12 +27,28 @@ export function decoderEntites(texte: string): string {
     });
 }
 
+/**
+ * Retire les balises jusqu'à ce qu'il n'en reste plus : un seul passage laisse `<scr<b>ipt>` devenir
+ * `<script>`. Discord n'interprète pas le HTML — rien ne s'y exécuterait —, mais un reste de balise
+ * s'afficherait tel quel dans le message (relevé par CodeQL à l'ouverture des dépôts, 2026-10-04).
+ */
+export function sansBalises(texte: string): string {
+    let avant: string;
+
+    do {
+        avant = texte;
+        texte = texte.replace(/<[^<>]*>/g, '');
+    } while (texte !== avant);
+
+    return texte;
+}
+
 /** Le HTML du forum en Markdown de Discord. */
 export function htmlVersMarkdown(html: string): string {
     const blocs: string[] = [];
     // Les blocs de code d'abord, mis de côté : rien de ce qu'ils contiennent ne doit être interprété.
     let md = html.replace(/\r/g, '').replace(/<pre[^>]*>(?:\s*<code[^>]*>)?([\s\S]*?)(?:<\/code>\s*)?<\/pre>/gi, (_, code: string) => {
-        blocs.push('```\n' + decoderEntites(code.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')).replace(/```/g, '`​``').trim() + '\n```');
+        blocs.push('```\n' + decoderEntites(sansBalises(code.replace(/<br\s*\/?>/gi, '\n'))).replace(/```/g, '`​``').trim() + '\n```');
 
         return `\u0000${blocs.length - 1}\u0000`;
     });
@@ -47,16 +63,17 @@ export function htmlVersMarkdown(html: string): string {
         .replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, '\n**$1**\n')
         .replace(/<img\b[^>]*?src="([^"]+)"[^>]*>/gi, (_, src: string) => ` ${src} `)
         .replace(/<a\b[^>]*?href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href: string, texte: string) => {
-            const visible = texte.replace(/<[^>]+>/g, '').trim();
+            const visible = sansBalises(texte).trim();
 
             return !visible || visible === href ? href : `[${visible}](${href})`;
         })
         .replace(/<li\b[^>]*>/gi, '\n- ')
         .replace(/<\/(ul|ol)>/gi, '\n')
-        .replace(/<blockquote\b[^>]*>([\s\S]*?)<\/blockquote>/gi, (_, cite: string) => '\n' + cite.replace(/<br\s*\/?>|<\/p>/gi, '\n').replace(/<[^>]+>/g, '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => `> ${l}`).join('\n') + '\n\n')
+        .replace(/<blockquote\b[^>]*>([\s\S]*?)<\/blockquote>/gi, (_, cite: string) => '\n' + sansBalises(cite.replace(/<br\s*\/?>|<\/p>/gi, '\n')).split('\n').map((l) => l.trim()).filter(Boolean).map((l) => `> ${l}`).join('\n') + '\n\n')
         .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<\/(p|div|h[1-6])>/gi, '\n\n')
-        .replace(/<[^>]+>/g, '');
+        .replace(/<\/(p|div|h[1-6])>/gi, '\n\n');
+
+    md = sansBalises(md);
 
     md = decoderEntites(md)
         .split('\n')
