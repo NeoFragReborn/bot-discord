@@ -227,6 +227,12 @@ export class ErreurSite extends Error {
 
 type Fetch = typeof fetch;
 
+/** Une image gardée sur le site : `path`, relative au site (pour le contenu d'un message), et `url`. */
+export interface ImageDuSite {
+    path: string;
+    url: string;
+}
+
 /** Délai d'attente d'une requête, en millisecondes. */
 const DELAI = 15_000;
 
@@ -398,6 +404,14 @@ export class Site {
         await this.requete('DELETE', `bugtracker/comments/${id}`, { author: auteur });
     }
 
+    /**
+     * Garde sur le site une image jointe sur Discord — le site la contrôle et la ré-encode comme celles de
+     * son éditeur (NeoFrag Reborn 1.2.27 ou plus récent) — et rend son adresse.
+     */
+    envoyerImage(octets: Uint8Array<ArrayBuffer>, nom: string, type: string): Promise<ImageDuSite> {
+        return this.requete<ImageDuSite>('POST', `forum/images?name=${encodeURIComponent(nom)}`, undefined, { octets, type });
+    }
+
     evenements(apres: number, limite = 100): Promise<PageEvenements> {
         return this.requete<PageEvenements>('GET', `events?after=${apres}&limit=${limite}`);
     }
@@ -415,7 +429,8 @@ export class Site {
         }
     }
 
-    private async requete<T>(methode: string, chemin: string, corps?: unknown): Promise<T> {
+    /** `corps` part en JSON ; `brut`, tel quel (une image), avec son type. */
+    private async requete<T>(methode: string, chemin: string, corps?: unknown, brut?: { octets: Uint8Array<ArrayBuffer>; type: string }): Promise<T> {
         let reponse: Response;
 
         try {
@@ -424,9 +439,9 @@ export class Site {
                 headers: {
                     Authorization: `Bearer ${this.cle}`,
                     Accept: 'application/json',
-                    ...(corps !== undefined ? { 'Content-Type': 'application/json' } : {}),
+                    ...(brut ? { 'Content-Type': brut.type } : corps !== undefined ? { 'Content-Type': 'application/json' } : {}),
                 },
-                ...(corps !== undefined ? { body: JSON.stringify(corps) } : {}),
+                ...(brut ? { body: new Blob([brut.octets], { type: brut.type }) } : corps !== undefined ? { body: JSON.stringify(corps) } : {}),
                 signal: AbortSignal.timeout(DELAI),
             });
         } catch (erreur) {

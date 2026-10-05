@@ -47,6 +47,20 @@ test('le signe de vie part en POST, en JSON', async () => {
     assert.equal((f.appels[0]?.init.headers as Record<string, string>)['Content-Type'], 'application/json');
 });
 
+test('une image part telle quelle, avec son type et son nom, et le site rend son adresse', async () => {
+    const f = faux(() => json(201, { data: { path: '/upload/editeur/2026/10/ab.png', url: 'https://exemple.fr/upload/editeur/2026/10/ab.png' } }));
+    const site = new Site('https://exemple.fr', CLE, f.fetch);
+    const octets = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+    const image = await site.envoyerImage(octets, 'capture d’écran.png', 'image/png');
+
+    assert.equal(image.path, '/upload/editeur/2026/10/ab.png');
+    assert.equal(f.appels[0]?.url, 'https://exemple.fr/api/v1/forum/images?name=capture%20d%E2%80%99%C3%A9cran.png');
+    assert.equal(f.appels[0]?.init.method, 'POST');
+    assert.equal((f.appels[0]?.init.headers as Record<string, string>)['Content-Type'], 'image/png');
+    assert.deepEqual(new Uint8Array(await (f.appels[0]?.init.body as Blob).arrayBuffer()), octets);
+});
+
 test('une erreur JSON de l’API garde son statut et son code', async () => {
     const site = new Site('https://exemple.fr', CLE, faux(() => json(403, { error: { code: 'forbidden', message: 'non' } })).fetch);
 

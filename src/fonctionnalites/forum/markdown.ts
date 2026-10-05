@@ -43,8 +43,60 @@ export function sansBalises(texte: string): string {
     return texte;
 }
 
-/** Le HTML du forum en Markdown de Discord. */
-export function htmlVersMarkdown(html: string): string {
+/** Le nombre d'aperçus (« embeds ») qu'un message Discord peut porter. */
+export const IMAGES_MAX = 10;
+
+/** La longueur d'adresse qu'un aperçu accepte : au-delà, Discord refuserait le message ENTIER. */
+export const ADRESSE_IMAGE_MAX = 2048;
+
+/**
+ * Une adresse du message, rendue complète. Discord ne connaît pas le site : l'adresse relative que
+ * l'éditeur écrit (`/upload/editeur/…`) y restait du texte, et l'image n'apparaissait pas (vu par
+ * le mainteneur le 2026-10-05). Elle se complète depuis `adresse`, celle du message sur le site ; les
+ * anciennes formes en `../../upload/…` se rattachent à la racine. Une adresse qui a déjà son schéma
+ * (`https:`, `mailto:`…) reste telle quelle.
+ */
+export function adresseComplete(brute: string, adresse: string): string {
+    const propre = decoderEntites(brute.trim());
+
+    if (!adresse || /^[a-z][a-z0-9+.-]*:/i.test(propre)) {
+        return propre;
+    }
+
+    try {
+        const ancienne = /^(?:\.\.?\/)+(upload\/.*)$/i.exec(propre);
+
+        return new URL(ancienne ? `/${ancienne[1]}` : propre, adresse).href;
+    } catch {
+        return propre;
+    }
+}
+
+/** Ce qu'on envoie à Discord pour un message du forum : son texte, et ses images en aperçus. */
+export interface MessagePourDiscord {
+    texte: string;
+    images: string[];
+}
+
+/**
+ * Le message du forum pour Discord. Ses images partent en aperçus — Discord les montre sous le texte —
+ * et non en adresses au milieu des phrases ; au-delà de dix, la limite de Discord, les suivantes
+ * restent des liens à la fin du texte.
+ */
+export function messagePourDiscord(html: string, adresse: string): MessagePourDiscord {
+    const images: string[] = [];
+    const texte = htmlVersMarkdown(html, adresse, images);
+    const enTrop = images.splice(IMAGES_MAX);
+
+    return { texte: [texte, ...enTrop].filter(Boolean).join('\n'), images };
+}
+
+/**
+ * Le HTML du forum en Markdown de Discord. `adresse` (celle du message sur le site) complète les
+ * adresses relatives ; `images`, s'il est donné, recueille les images au lieu de les laisser dans le
+ * texte.
+ */
+export function htmlVersMarkdown(html: string, adresse = '', images: string[] | null = null): string {
     const blocs: string[] = [];
     // Les blocs de code d'abord, mis de côté : rien de ce qu'ils contiennent ne doit être interprété.
     let md = html.replace(/\r/g, '').replace(/<pre[^>]*>(?:\s*<code[^>]*>)?([\s\S]*?)(?:<\/code>\s*)?<\/pre>/gi, (_, code: string) => {
@@ -61,11 +113,28 @@ export function htmlVersMarkdown(html: string): string {
         .replace(/<u\b[^>]*>([\s\S]*?)<\/u>/gi, '__$1__')
         .replace(/<(s|del|strike)\b[^>]*>([\s\S]*?)<\/\1>/gi, '~~$2~~')
         .replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, '\n**$1**\n')
-        .replace(/<img\b[^>]*?src="([^"]+)"[^>]*>/gi, (_, src: string) => ` ${src} `)
-        .replace(/<a\b[^>]*?href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href: string, texte: string) => {
-            const visible = sansBalises(texte).trim();
+        .replace(/<img\b[^>]*?src="([^"]+)"[^>]*>/gi, (_, src: string) => {
+            const url = adresseComplete(src, adresse);
 
-            return !visible || visible === href ? href : `[${visible}](${href})`;
+            // Seule une adresse web devient un aperçu — Discord ne sait pas montrer une image `data:` —, et
+            // d'une longueur qu'il accepte : un seul aperçu refusé ferait refuser tout le message.
+            if (images && /^https?:\/\//i.test(url) && url.length <= ADRESSE_IMAGE_MAX) {
+                images.push(url);
+
+                return ' ';
+            }
+
+            return ` ${url} `;
+        })
+        .replace(/<a\b[^>]*?href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href: string, texte: string) => {
+            const cible = adresseComplete(href, adresse);
+            const visible = sansBalises(texte).trim();
+            // Un lien web s'écrit `<adresse>` : cliquable, sans carte d'aperçu. Retirer une carte sur Discord
+            // masque TOUS les aperçus du message — ses images comprises. Les chevrons sont posés à la fin :
+            // le nettoyage des balises les prendrait pour une balise.
+            const lien = /^https?:\/\//i.test(cible) ? `\u0001${cible}\u0002` : cible;
+
+            return !visible || visible === href || visible === cible ? lien : `[${visible}](${lien})`;
         })
         .replace(/<li\b[^>]*>/gi, '\n- ')
         .replace(/<\/(ul|ol)>/gi, '\n')
@@ -83,7 +152,8 @@ export function htmlVersMarkdown(html: string): string {
         .trim();
 
     // Les blocs de code reprennent leur place, et des liens nus deviennent cliquables sans aperçu bruyant.
-    return md.replace(/\u0000(\d+)\u0000/g, (_, n: string) => `\n${blocs[Number(n)] ?? ''}\n`).replace(/\n{3,}/g, '\n\n').trim();
+    return md.replace(/\u0000(\d+)\u0000/g, (_, n: string) => `\n${blocs[Number(n)] ?? ''}\n`).replace(/\n{3,}/g, '\n\n').trim()
+        .replace(/\u0001/g, '<').replace(/\u0002/g, '>');
 }
 
 /** Un texte coupé pour tenir dans un message Discord, avec la fin donnée (un lien vers le site). */
@@ -114,15 +184,21 @@ export function tenirDansDiscord(texte: string, fin: string, finSiCoupe: string)
 export interface PieceJointe {
     nom: string;
     url: string;
+    /** L'adresse de l'image une fois gardée sur le site (`/upload/editeur/…`), quand c'en est une. */
+    chemin?: string;
 }
 
 /**
  * Le texte d'un message Discord pour le forum : son texte (mentions déjà rendues lisibles), puis
- * ses pièces jointes. Les adresses des pièces jointes de Discord expirent : on renvoie au message
- * sur Discord, qui, lui, reste.
+ * ses pièces jointes. Une image gardée sur le site s'y montre ; pour le reste, les adresses des
+ * pièces jointes de Discord expirent : on renvoie au message sur Discord, qui, lui, reste.
  */
 export function discordVersSite(texte: string, pieces: readonly PieceJointe[], lienDuMessage: string): string {
-    const lignes = pieces.map((p) => `📎 [${p.nom.replace(/[[\]]/g, '')}](${lienDuMessage})`);
+    const lignes = pieces.map((p) => {
+        const nom = p.nom.replace(/[[\]]/g, '');
+
+        return p.chemin ? `![${nom}](${p.chemin})` : `📎 [${nom}](${lienDuMessage})`;
+    });
 
     return [texte.trim(), ...lignes].filter(Boolean).join('\n\n');
 }

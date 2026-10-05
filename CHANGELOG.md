@@ -4,6 +4,26 @@ Le bot a ses propres numéros de version, indépendants de ceux de NeoFrag Rebor
 la version du site qu'elle demande. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et les numéros le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.2.4] — 2026-10-05
+
+Demande NeoFrag Reborn **1.2.12** ou plus récent, comme la 0.2.3 ; les images envoyées sur Discord
+demandent la **1.2.27** pour s'afficher sur le site — avec une version plus ancienne, elles restent des liens.
+
+### Ajouté
+- **Une image jointe sur Discord s'affiche dans le message du forum** : le bot la télécharge et la confie
+  au site (JPEG, PNG, GIF ou WebP, 5 Mo au plus), qui la contrôle comme celles de son éditeur. Les autres
+  fichiers, et toutes les pièces jointes du Bugtracker, gardent le lien vers le message Discord.
+
+### Corrigé
+- **Les images d'un message du forum apparaissent sur Discord.** Le bot recopiait l'adresse relative que
+  l'éditeur du site écrit (`/upload/editeur/…`) : Discord la montrait en texte, sans l'image. Les images
+  partent maintenant en aperçus sous le message, à leur adresse complète, et suivent ses modifications ;
+  au-delà de dix, la limite de Discord, les suivantes restent des liens. Un lien relatif du site devient
+  lui aussi un lien complet. Vu sur le serveur Discord officiel du projet.
+- **Les liens d'un message recopié n'affichent plus de carte d'aperçu** : retirer une de ces cartes, sur
+  Discord, masquait tous les aperçus du message, images comprises. Un message dont les aperçus avaient été
+  masqués retrouve ses images à sa prochaine modification sur le site.
+
 ## [0.2.3] — 2026-10-04
 
 Demande NeoFrag Reborn **1.2.12** ou plus récent, comme la 0.2.2.

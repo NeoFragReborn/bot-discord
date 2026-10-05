@@ -17,7 +17,7 @@
  * recopie pas ; ce que son webhook poste sur Discord, il ne le reprend pas.
  */
 
-import { ChannelType, Events, GatewayIntentBits, PermissionsBitField, type AnyThreadChannel, type ForumChannel, type GuildMember, type Message, type MessageReaction, type PartialMessage, type PartialMessageReaction, type PartialUser, type User, type Webhook } from 'discord.js';
+import { ChannelType, Events, GatewayIntentBits, MessageFlags, PermissionsBitField, type AnyThreadChannel, type Attachment, type ForumChannel, type GuildMember, type Message, type MessageReaction, type PartialMessage, type PartialMessageReaction, type PartialUser, type User, type Webhook } from 'discord.js';
 import { formater, messageErreur, type Valeur } from '../../journal.js';
 import { ErreurSite, type AuteurDiscord, type Evenement, type MessageForum, type SalonRelie, type Sujet } from '../../site.js';
 import { TEXTES } from '../../textes.js';
@@ -25,10 +25,22 @@ import { signature, webhookDuSalon } from '../commun.js';
 import type { Contexte, Fonctionnalite, Reglage } from '../types.js';
 import { correspondancesDuSalon, etiquettesDuFil, memesEtiquettes, prefixeDuFil } from './etiquettes.js';
 import { FileParCle } from './file.js';
-import { discordVersSite, htmlVersMarkdown, tenirDansDiscord } from './markdown.js';
+import { discordVersSite, messagePourDiscord, tenirDansDiscord, type PieceJointe } from './markdown.js';
 
 /** Messages d'un fil recopiés au plus quand on le publie à la demande. */
 const FIL_MAX = 500;
+
+/** Les images qu'un message du forum garde (celles de l'éditeur du site), et leur poids au plus : 5 Mo. */
+const IMAGES_GARDEES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const IMAGE_TAILLE_MAX = 5 * 1024 * 1024;
+
+/** Les images déjà gardées sur le site dont on se souvient, pour ne pas les renvoyer à chaque modification. */
+const IMAGES_EN_MEMOIRE = 500;
+
+/** Les images d'un message du site, en aperçus que Discord montre sous le texte. */
+function apercus(images: readonly string[]): { image: { url: string } }[] {
+    return images.map((url) => ({ image: { url } }));
+}
 
 /** Les permissions dont le bot a besoin dans un salon relié. */
 const PERMISSIONS_DU_SALON = [
@@ -62,6 +74,10 @@ export class SynchroForum implements Fonctionnalite {
     private webhooks = new Map<string, Webhook>();
     private file = new FileParCle();
     private avertis = new Set<string>();
+    /** Pièce jointe Discord → son adresse sur le site, une fois l'image gardée. */
+    private imagesGardees = new Map<string, string>();
+    /** Le site ne garde pas d'images (d'avant la 1.2.27) : on ne lui en envoie plus. */
+    private siteSansImages = false;
     private retraits: (() => void)[] = [];
     private salonsDits = -1;
 
@@ -194,11 +210,12 @@ export class SynchroForum implements Fonctionnalite {
             return;
         }
 
-        const contenu = tenirDansDiscord(htmlVersMarkdown(message.html ?? ''), this.finSujet(ctx, sujet), `-# [${ctx.textes.dans(null, TEXTES.lireLaSuite)}](<${message.url}>)`);
+        const corps = messagePourDiscord(message.html ?? '', message.url);
+        const contenu = tenirDansDiscord(corps.texte, this.finSujet(ctx, sujet), `-# [${ctx.textes.dans(null, TEXTES.lireLaSuite)}](<${message.url}>)`);
         const signature = await this.signature(ctx, message);
         const webhook = await this.webhook(canal);
         const etiquettes = etiquettesDuFil([], correspondancesDuSalon(ctx.config.tags, canal.id), sujet.prefix?.id ?? null);
-        const envoye = await webhook.send({ content: contenu, username: signature.nom, ...(signature.avatar ? { avatarURL: signature.avatar } : {}), threadName: Array.from(sujet.title).slice(0, 100).join(''), ...(etiquettes.length ? { appliedTags: etiquettes } : {}), allowedMentions: { parse: [] } });
+        const envoye = await webhook.send({ content: contenu, embeds: apercus(corps.images), username: signature.nom, ...(signature.avatar ? { avatarURL: signature.avatar } : {}), threadName: Array.from(sujet.title).slice(0, 100).join(''), ...(etiquettes.length ? { appliedTags: etiquettes } : {}), allowedMentions: { parse: [] } });
 
         await ctx.site.lier('topic', sujetId, envoye.channelId);
         await ctx.site.lier('message', message.id, envoye.id);
@@ -220,10 +237,11 @@ export class SynchroForum implements Fonctionnalite {
             return;
         }
 
-        const contenu = tenirDansDiscord(htmlVersMarkdown(message.html ?? ''), '', `-# [${ctx.textes.dans(null, TEXTES.lireLaSuite)}](<${message.url}>)`);
+        const corps = messagePourDiscord(message.html ?? '', message.url);
+        const contenu = tenirDansDiscord(corps.texte, '', `-# [${ctx.textes.dans(null, TEXTES.lireLaSuite)}](<${message.url}>)`);
         const signature = await this.signature(ctx, message);
         const webhook = await this.webhook(canal);
-        const envoye = await webhook.send({ content: contenu, username: signature.nom, ...(signature.avatar ? { avatarURL: signature.avatar } : {}), threadId: lienSujet.discord_id, allowedMentions: { parse: [] } });
+        const envoye = await webhook.send({ content: contenu, embeds: apercus(corps.images), username: signature.nom, ...(signature.avatar ? { avatarURL: signature.avatar } : {}), threadId: lienSujet.discord_id, allowedMentions: { parse: [] } });
 
         await ctx.site.lier('message', message.id, envoye.id);
     }
@@ -251,7 +269,16 @@ export class SynchroForum implements Fonctionnalite {
         const sujet = ouverture ? await ctx.site.sujet(message.topic_id) : null;
         const fin = sujet ? this.finSujet(ctx, sujet) : '';
 
-        await webhook.editMessage(lien.discord_id, { content: tenirDansDiscord(htmlVersMarkdown(message.html ?? ''), fin, `-# [${ctx.textes.dans(null, TEXTES.lireLaSuite)}](<${message.url}>)`), threadId: fil.id });
+        const corps = messagePourDiscord(message.html ?? '', message.url);
+
+        // Retirer la carte d'aperçu d'un lien, sur Discord, masque TOUS les aperçus du message : ses images
+        // aussi (les annonces du 2026-10-04 l'étaient). Le message vient du site, ses liens n'ont plus de
+        // carte : on lève le masque avant de réécrire.
+        if (corps.images.length && surDiscord.flags.has(MessageFlags.SuppressEmbeds)) {
+            await surDiscord.suppressEmbeds(false);
+        }
+
+        await webhook.editMessage(lien.discord_id, { content: tenirDansDiscord(corps.texte, fin, `-# [${ctx.textes.dans(null, TEXTES.lireLaSuite)}](<${message.url}>)`), embeds: apercus(corps.images), threadId: fil.id });
 
         const titre = sujet ? Array.from(sujet.title).slice(0, 100).join('') : '';
 
@@ -371,7 +398,7 @@ export class SynchroForum implements Fonctionnalite {
         }
 
         const lien = await ctx.site.lien('message', { discordId: m.id });
-        const contenu = this.contenuVersSite(m);
+        const contenu = await this.contenuVersSite(ctx, m);
 
         if (!lien || !contenu) {
             return;
@@ -504,7 +531,7 @@ export class SynchroForum implements Fonctionnalite {
         }
 
         const prefixe = prefixeDuFil(fil.appliedTags, correspondancesDuSalon(ctx.config.tags, salon.channel_id));
-        const sujet = await ctx.site.creerSujet(salon.forum_id, Array.from(fil.name).slice(0, 100).join(''), this.contenuVersSite(ouverture) || fil.name, this.auteur(ouverture), prefixe ?? undefined);
+        const sujet = await ctx.site.creerSujet(salon.forum_id, Array.from(fil.name).slice(0, 100).join(''), (await this.contenuVersSite(ctx, ouverture)) || fil.name, this.auteur(ouverture), prefixe ?? undefined);
 
         await ctx.site.lier('topic', sujet.id, fil.id);
 
@@ -523,7 +550,7 @@ export class SynchroForum implements Fonctionnalite {
             return false;
         }
 
-        const contenu = this.contenuVersSite(m);
+        const contenu = await this.contenuVersSite(ctx, m);
 
         if (!contenu) {
             return false;
@@ -597,8 +624,68 @@ export class SynchroForum implements Fonctionnalite {
         return { discord: { id: m.author.id, username: m.member?.displayName ?? m.author.globalName ?? m.author.username, avatar: m.author.displayAvatarURL({ extension: 'png', size: 128 }) } };
     }
 
-    private contenuVersSite(m: Message): string {
-        return discordVersSite(m.cleanContent, [...m.attachments.values()].map((a) => ({ nom: a.name, url: a.url })), m.url);
+    private async contenuVersSite(ctx: Contexte, m: Message): Promise<string> {
+        const pieces: PieceJointe[] = [];
+
+        for (const a of m.attachments.values()) {
+            const chemin = await this.imageSurLeSite(ctx, a);
+
+            pieces.push({ nom: a.name, url: a.url, ...(chemin ? { chemin } : {}) });
+        }
+
+        return discordVersSite(m.cleanContent, pieces, m.url);
+    }
+
+    /**
+     * Une image jointe sur Discord, gardée sur le site — les adresses des fichiers de Discord expirent —, et
+     * son adresse là-bas. NULL pour ce qui n'est pas une image du forum, une image trop lourde, ou un envoi
+     * raté : le message garde alors le lien vers Discord, comme pour tout autre fichier.
+     */
+    private async imageSurLeSite(ctx: Contexte, a: Attachment): Promise<string | null> {
+        const type = (a.contentType ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+
+        if (this.siteSansImages || !IMAGES_GARDEES.includes(type) || a.size > IMAGE_TAILLE_MAX) {
+            return null;
+        }
+
+        const connue = this.imagesGardees.get(a.id);
+
+        if (connue) {
+            return connue;
+        }
+
+        try {
+            const reponse = await fetch(a.url, { signal: AbortSignal.timeout(15_000) });
+
+            if (!reponse.ok) {
+                throw new Error(`Discord : HTTP ${reponse.status}`);
+            }
+
+            const octets = new Uint8Array(await reponse.arrayBuffer());
+
+            if (octets.byteLength > IMAGE_TAILLE_MAX) {
+                return null;
+            }
+
+            const image = await ctx.site.envoyerImage(octets, a.name, type);
+
+            if (this.imagesGardees.size >= IMAGES_EN_MEMOIRE) {
+                this.imagesGardees.delete(this.imagesGardees.keys().next().value ?? '');
+            }
+
+            this.imagesGardees.set(a.id, image.path);
+
+            return image.path;
+        } catch (erreur) {
+            // Un site d'avant la 1.2.27 ne connaît pas cette adresse : on le dit une fois, et l'on garde les liens.
+            if (erreur instanceof ErreurSite && erreur.code === 'not_found') {
+                this.siteSansImages = true;
+            }
+
+            ctx.journal.warn('Forum : %s', `${a.name} — ${messageErreur(erreur)}`);
+
+            return null;
+        }
     }
 
     /** Le compte Discord de l'auteur d'un message du site (quand Discord ne le dit plus : message effacé). */
