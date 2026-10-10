@@ -4,6 +4,36 @@ Le bot a ses propres numéros de version, indépendants de ceux de NeoFrag Rebor
 la version du site qu'elle demande. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et les numéros le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.2.5] — 2026-10-09
+
+Demande NeoFrag Reborn **1.2.12** ou plus récent, comme la 0.2.4 ; un ticket qui change de salon demande
+la **1.2.48** — avec une version plus ancienne, son fil reste où il est.
+
+### Ajouté
+- **Les idées ont leur salon, à part des bogues** : un nouveau réglage du Bugtracker, « Salon Forum des
+  suggestions ». Les tickets de type Idée y ont leur fil, avec l'étiquette Idée et celles des statuts ;
+  les autres restent dans le salon des tickets. Choisir ce salon y fait passer les idées encore ouvertes.
+  Un fil ouvert à la main dans le salon des suggestions devient une idée ; `/idee` y ouvre son fil, et sa
+  fenêtre demande l'idée et ce qu'elle apporterait au lieu des étapes d'un bogue.
+- **Un ticket qui change de type change de salon** : Discord ne déplace pas un fil, le bot en ouvre un
+  nouveau dans le bon salon. L'ancien fil, verrouillé et archivé, renvoie au nouveau, et le nouveau à
+  l'ancien. Sur le site, le ticket garde tous ses commentaires.
+- **Les rôles reliés portent le nom et la couleur de leur groupe** (NeoFrag Reborn 1.2.48) : un groupe
+  renommé ou recoloré sur le site l'est aussi sur le serveur, au passage qui suit. Un nouveau réglage des
+  rôles l'éteint ; un rôle relié à plusieurs groupes garde les siens.
+- **Les permissions des salons reliés suivent les droits de leur forum sur le site** (NeoFrag Reborn
+  1.2.48) : tout le serveur compte comme les membres du site ; qui ne peut pas lire le forum ne voit pas
+  le salon, qui ne peut pas y écrire n'y poste pas (en mode « tout »), et un rôle relié rend à son groupe
+  ce que les membres n'ont pas. Jusqu'ici, n'importe qui pouvait ouvrir un fil dans le salon d'un forum
+  réservé à l'équipe, et le bot le recopiait sur le site. Le bot ne touche qu'à la vue et à l'écriture,
+  pour @everyone, les rôles reliés et lui-même. Un nouveau réglage du forum l'éteint.
+- Un message que le site refuse parce que son auteur n'a pas le droit d'écrire dans le forum reste sur
+  Discord ; le journal le dit une fois, sans erreur.
+
+### Changé
+- La mise en place du serveur donne leur couleur aux rôles qu'elle crée par la propriété `colors` de
+  Discord, et non plus par `color`, dépréciée.
+
 ## [0.2.4] — 2026-10-05
 
 Demande NeoFrag Reborn **1.2.12** ou plus récent, comme la 0.2.3 ; les images envoyées sur Discord

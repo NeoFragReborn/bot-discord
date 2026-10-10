@@ -13,12 +13,21 @@ export interface SalonRelie {
     forum_id: number;
     mode: 'all' | 'reaction';
     emoji: string;
+    /**
+     * Ce que peuvent les groupes dans son forum — `members`, et ceux qu'un rôle relie : le lire, y écrire
+     * (NeoFrag Reborn 1.2.48 ; absent avant).
+     */
+    access?: Record<string, { read: boolean; write: boolean }>;
 }
 
 /** Une correspondance groupe du site ↔ rôle Discord. */
 export interface RoleRelie {
     group_key: string;
     role_id: string;
+    /** Le nom de son groupe, dans la langue du site (NeoFrag Reborn 1.2.48 ; absent avant). */
+    name?: string | null;
+    /** La couleur de son groupe, en hexadécimal (NULL : le groupe n'en a pas). */
+    color?: string | null;
 }
 
 /** La configuration du bot, réglée dans l'administration du site. */
@@ -225,6 +234,15 @@ export class ErreurSite extends Error {
     }
 }
 
+/**
+ * Un refus de la modération du site (NeoFrag Reborn 1.2.48) : l'auteur est sanctionné là où il écrit (`sanctioned` : muet,
+ * banni), ou son texte porte un lien qu'une sanction lui interdit (`links_forbidden`). Ce n'est pas une panne : le bot
+ * ne recopie pas, et le dit au journal.
+ */
+export function refusDeModeration(erreur: unknown): erreur is ErreurSite {
+    return erreur instanceof ErreurSite && erreur.statut === 403 && (erreur.code === 'sanctioned' || erreur.code === 'links_forbidden');
+}
+
 type Fetch = typeof fetch;
 
 /** Une image gardée sur le site : `path`, relative au site (pour le contenu d'un message), et `url`. */
@@ -280,8 +298,9 @@ export class Site {
         return this.ouNull(this.requete<Lien>('GET', `discord/links?type=${type}&${critere}`), 'link_not_found');
     }
 
-    async lier(type: TypeLien, siteId: number, discordId: string): Promise<void> {
-        await this.requete('POST', 'discord/links', { type, site_id: siteId, discord_id: discordId });
+    /** Garde un lien ; `remplacer` : celui que l'élément du site avait déjà cède la place (un ticket qui change de salon, NeoFrag Reborn 1.2.48). */
+    async lier(type: TypeLien, siteId: number, discordId: string, remplacer = false): Promise<void> {
+        await this.requete('POST', 'discord/links', { type, site_id: siteId, discord_id: discordId, ...(remplacer ? { replace: true } : {}) });
     }
 
     /** `/forum account link` : un lien à usage unique vers le site, ou le membre déjà lié. */

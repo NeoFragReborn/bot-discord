@@ -3,7 +3,8 @@
  *
  * Un membre du site qui a lié son compte Discord reçoit, sur le serveur, les rôles reliés à ses
  * groupes (Discord → Groupes et rôles, dans l'administration) et les perd quand il quitte le
- * groupe ; si l'option est cochée, il y porte son pseudo du site.
+ * groupe ; si l'option est cochée, il y porte son pseudo du site. Les rôles reliés portent le nom et
+ * la couleur de leur groupe (0.2.5) : un groupe renommé sur le site l'est aussi sur le serveur.
  *
  * Quand : au démarrage et à chaque changement de configuration (tout le monde), quand un membre
  * change de groupe sur le site (événement « user.groups.changed »), quand un membre lié rejoint le
@@ -17,7 +18,7 @@ import { DiscordAPIError, Events, GatewayIntentBits, PermissionsBitField, type G
 import { formater, messageErreur, type Valeur } from '../../journal.js';
 import type { Evenement, RoleRelie } from '../../site.js';
 import type { Contexte, Fonctionnalite, Reglage } from '../types.js';
-import { planifier } from './plan.js';
+import { apparenceVoulue, planifier } from './plan.js';
 
 
 /** Ce qu'une synchronisation a fait, pour une seule ligne de journal. */
@@ -38,6 +39,7 @@ export class RolesEtPseudos implements Fonctionnalite {
     readonly description = 'Donne aux membres qui ont lié leur compte Discord les rôles reliés à leurs groupes, et leur pseudo du site s’ils le veulent.';
     readonly reglages = [
         { cle: 'pseudos', type: 'bool', defaut: false, libelle: 'Donner aux membres liés leur pseudo du site sur le serveur' },
+        { cle: 'apparence', type: 'bool', defaut: true, libelle: 'Donner aux rôles reliés le nom et la couleur de leur groupe', aide: 'Le site fait foi : un groupe renommé ou recoloré l’est aussi sur le serveur. Un rôle relié à plusieurs groupes garde les siens.' },
         { cle: 'intervalle', type: 'int', defaut: 10, min: 5, max: 120, libelle: 'Minutes entre deux passages sur tous les membres', aide: 'Un changement de groupe est appliqué tout de suite ; ce passage rattrape le reste (un pseudo changé, un compte lié).' },
     ] as const satisfies readonly Reglage[];
     readonly intents = [GatewayIntentBits.GuildMembers] as const;
@@ -174,6 +176,9 @@ export class RolesEtPseudos implements Fonctionnalite {
         }
 
         const correspondances = this.correspondancesUtilisables(ctx);
+
+        await this.apparences(ctx, correspondances);
+
         const lies = await ctx.site.membres();
         // Tous les membres du serveur en une requête (l'intent « membres » le permet).
         const presents = await ctx.guilde.members.fetch();
@@ -251,6 +256,34 @@ export class RolesEtPseudos implements Fonctionnalite {
                 bilan.pseudos++;
             } catch (erreur) {
                 bilan.erreurs.push(`${discord.user.tag} (nickname) : ${this.explication(erreur)}`);
+            }
+        }
+    }
+
+    /**
+     * Les rôles reliés prennent le nom et la couleur de leur groupe (réglage « apparence ») : le site fait foi. Un rôle
+     * relié à plusieurs groupes garde les siens — lequel suivre ? Un groupe sans couleur laisse celle du rôle.
+     */
+    private async apparences(ctx: Contexte, correspondances: readonly RoleRelie[]): Promise<void> {
+        if (ctx.reglages.apparence === false) {
+            return;
+        }
+
+        for (const c of correspondances) {
+            const role = ctx.guilde.roles.cache.get(c.role_id);
+            const voulue = role && ctx.config.roles.filter((r) => r.role_id === c.role_id).length === 1 ? apparenceVoulue(c, { name: role.name, color: role.colors.primaryColor }) : null;
+
+            if (!role || !voulue) {
+                continue;
+            }
+
+            const avant = role.name;
+
+            try {
+                await role.edit({ ...(voulue.name !== undefined ? { name: voulue.name } : {}), ...(voulue.color !== undefined ? { colors: { primaryColor: voulue.color } } : {}), reason: 'NeoFrag : nom et couleur du groupe du site' });
+                ctx.journal.info('Rôle « %s » : nom et couleur repris du groupe « %s » du site.', avant, voulue.name ?? avant);
+            } catch (erreur) {
+                this.avertir(ctx, 'Rôle « %s » : nom et couleur non repris de son groupe — %s', avant, this.explication(erreur));
             }
         }
     }

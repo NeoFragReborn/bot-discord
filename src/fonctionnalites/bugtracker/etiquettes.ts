@@ -54,6 +54,26 @@ export function tousLesNoms(noms: Noms): string[] {
     return [...Object.values(noms.types), ...Object.values(noms.statuts)];
 }
 
+/** Tous les types de ticket. */
+export const TYPES: readonly Type[] = Object.keys(MODELES_TYPES) as Type[];
+
+/**
+ * Les types dont un salon reçoit les fils : celui des suggestions, les idées ; celui des tickets, tout le reste quand
+ * les idées ont leur salon, sinon tout.
+ */
+export function typesDuSalon(salonDesIdees: boolean, ideesAPart: boolean): Type[] {
+    if (salonDesIdees) {
+        return ['feature'];
+    }
+
+    return ideesAPart ? TYPES.filter((t) => t !== 'feature') : [...TYPES];
+}
+
+/** Les noms d'étiquettes qu'un salon doit avoir : ceux de ses types, et ceux de tous les statuts. */
+export function nomsDuSalon(noms: Noms, types: readonly Type[]): string[] {
+    return [...types.map((t) => noms.types[t]), ...Object.values(noms.statuts)];
+}
+
 const trouver = (tags: readonly { id: string; name: string }[], nom: string): string | undefined => tags.find((t) => t.name.toLowerCase() === nom.toLowerCase())?.id;
 
 /** Les étiquettes d'un ticket : celle de son type et celle de son statut, quand le salon les a. */
@@ -61,8 +81,8 @@ export function etiquettesDuTicket(tags: readonly { id: string; name: string }[]
     return [trouver(tags, noms.types[type]), trouver(tags, noms.statuts[statut])].filter((id): id is string => id !== undefined);
 }
 
-/** Le type que disent les étiquettes d'un fil (un fil ouvert à la main sur Discord), sinon « bug ». */
-export function typeDesEtiquettes(appliquees: readonly string[], tags: readonly { id: string; name: string }[], noms: Noms): Type {
+/** Le type que disent les étiquettes d'un fil (un fil ouvert à la main sur Discord), sinon `defaut`. */
+export function typeDesEtiquettes(appliquees: readonly string[], tags: readonly { id: string; name: string }[], noms: Noms, defaut: Type = 'bug'): Type {
     for (const [type, nom] of Object.entries(noms.types) as [Type, string][]) {
         const id = trouver(tags, nom);
 
@@ -71,5 +91,5 @@ export function typeDesEtiquettes(appliquees: readonly string[], tags: readonly 
         }
     }
 
-    return 'bug';
+    return defaut;
 }

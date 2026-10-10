@@ -48,3 +48,35 @@ export function planifier(groupes: readonly string[], pseudoSite: string, etat: 
         pseudo,
     };
 }
+
+/** Longueur maximale d'un nom de rôle Discord, en caractères. */
+export const NOM_ROLE_MAX = 100;
+
+/** Ce qu'un rôle relié doit changer pour porter le nom et la couleur de son groupe ; NULL s'il n'a rien à changer. */
+export interface Apparence {
+    name?: string;
+    color?: number;
+}
+
+/**
+ * Le nom et la couleur qu'un rôle relié doit prendre de son groupe. Un groupe sans couleur laisse celle du rôle ; un site
+ * qui ne dit pas le nom (d'avant la 1.2.48) laisse le rôle tel quel.
+ */
+export function apparenceVoulue(groupe: Pick<RoleRelie, 'name' | 'color'>, role: { name: string; color: number }): Apparence | null {
+    const voulue: Apparence = {};
+    const nom = Array.from((groupe.name ?? '').trim()).slice(0, NOM_ROLE_MAX).join('');
+
+    if (nom !== '' && nom !== role.name) {
+        voulue.name = nom;
+    }
+
+    if (groupe.color && /^#[0-9a-f]{6}$/i.test(groupe.color)) {
+        const couleur = parseInt(groupe.color.slice(1), 16);
+
+        if (couleur !== role.color) {
+            voulue.color = couleur;
+        }
+    }
+
+    return voulue.name !== undefined || voulue.color !== undefined ? voulue : null;
+}

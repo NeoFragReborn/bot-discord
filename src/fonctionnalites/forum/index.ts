@@ -15,14 +15,19 @@
  *
  * Pas d'écho : ce que le bot écrit sur le site porte sa clé dans le fil d'événements, et il ne le
  * recopie pas ; ce que son webhook poste sur Discord, il ne le reprend pas.
+ *
+ * Les permissions de chaque salon relié suivent les droits de son forum sur le site (0.2.5, réglage
+ * « droits », cf. droits.ts) : qui ne peut pas lire le forum ne voit pas le salon, qui ne peut pas y
+ * écrire n'y poste pas.
  */
 
-import { ChannelType, Events, GatewayIntentBits, MessageFlags, PermissionsBitField, type AnyThreadChannel, type Attachment, type ForumChannel, type GuildMember, type Message, type MessageReaction, type PartialMessage, type PartialMessageReaction, type PartialUser, type User, type Webhook } from 'discord.js';
+import { ChannelType, Events, GatewayIntentBits, MessageFlags, PermissionsBitField, Routes, type AnyThreadChannel, type Attachment, type ForumChannel, type GuildMember, type Message, type MessageReaction, type PartialMessage, type PartialMessageReaction, type PartialUser, type User, type Webhook } from 'discord.js';
 import { formater, messageErreur, type Valeur } from '../../journal.js';
-import { ErreurSite, type AuteurDiscord, type Evenement, type MessageForum, type SalonRelie, type Sujet } from '../../site.js';
+import { ErreurSite, refusDeModeration, type AuteurDiscord, type Evenement, type MessageForum, type SalonRelie, type Sujet } from '../../site.js';
 import { TEXTES } from '../../textes.js';
 import { signature, webhookDuSalon } from '../commun.js';
 import type { Contexte, Fonctionnalite, Reglage } from '../types.js';
+import { planDesDroits } from './droits.js';
 import { correspondancesDuSalon, etiquettesDuFil, memesEtiquettes, prefixeDuFil } from './etiquettes.js';
 import { FileParCle } from './file.js';
 import { discordVersSite, messagePourDiscord, tenirDansDiscord, type PieceJointe } from './markdown.js';
@@ -66,6 +71,7 @@ export class SynchroForum implements Fonctionnalite {
     readonly reglages = [
         { cle: 'lien_site', type: 'bool', defaut: true, libelle: 'Sous chaque sujet recopié sur Discord, un lien vers le site' },
         { cle: 'rattrapage', type: 'bool', defaut: true, libelle: 'Au démarrage, rattraper ce qui s’est écrit sur Discord pendant que le bot était éteint' },
+        { cle: 'droits', type: 'bool', defaut: true, libelle: 'Accorder les permissions des salons reliés aux droits de leur forum sur le site', aide: 'Qui ne peut pas lire un forum ne voit pas son salon ; qui ne peut pas y écrire n’y poste pas (en mode « tout »). Tout le serveur compte comme les membres du site ; un rôle relié, comme son groupe.' },
     ] as const satisfies readonly Reglage[];
     readonly intents = [GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMessageReactions] as const;
     readonly evenements = ['forum.topic.created', 'forum.post.created', 'forum.post.edited', 'forum.post.deleted', 'forum.topic.prefixed'] as const;
@@ -123,6 +129,7 @@ export class SynchroForum implements Fonctionnalite {
         ];
 
         this.verifierSalons(ctx);
+        await this.accorderDroits(ctx);
 
         if (ctx.reglages.rattrapage) {
             // En arrière-plan : le bot ne fait pas attendre ses autres fonctionnalités.
@@ -135,14 +142,16 @@ export class SynchroForum implements Fonctionnalite {
         this.avertis.clear();
         this.webhooks.clear();
         this.verifierSalons(ctx);
+        await this.accorderDroits(ctx);
         await this.rattraper(ctx, true);
     }
 
-    reconfigurer(ctx: Contexte): void {
+    async reconfigurer(ctx: Contexte): Promise<void> {
         this.ctx = ctx;
         this.avertis.clear();
         this.webhooks.clear();
         this.verifierSalons(ctx);
+        await this.accorderDroits(ctx);
     }
 
     tour(ctx: Contexte): void {
@@ -407,7 +416,8 @@ export class SynchroForum implements Fonctionnalite {
         try {
             await ctx.site.modifierMessage(lien.site_id, contenu, this.auteur(m));
         } catch (erreur) {
-            if (!(erreur instanceof ErreurSite && ['not_author', 'message_not_found'].includes(erreur.code))) {
+            // Un auteur sanctionné depuis : sa correction ne passe pas, son message du site reste tel quel.
+            if (!(erreur instanceof ErreurSite && ['not_author', 'message_not_found'].includes(erreur.code)) && !refusDeModeration(erreur)) {
                 throw erreur;
             }
         }
@@ -531,7 +541,27 @@ export class SynchroForum implements Fonctionnalite {
         }
 
         const prefixe = prefixeDuFil(fil.appliedTags, correspondancesDuSalon(ctx.config.tags, salon.channel_id));
-        const sujet = await ctx.site.creerSujet(salon.forum_id, Array.from(fil.name).slice(0, 100).join(''), (await this.contenuVersSite(ctx, ouverture)) || fil.name, this.auteur(ouverture), prefixe ?? undefined);
+        let sujet: Sujet;
+
+        try {
+            sujet = await ctx.site.creerSujet(salon.forum_id, Array.from(fil.name).slice(0, 100).join(''), (await this.contenuVersSite(ctx, ouverture)) || fil.name, this.auteur(ouverture), prefixe ?? undefined);
+        } catch (erreur) {
+            // L'auteur n'a pas le droit d'écrire dans ce forum du site (NeoFrag Reborn 1.2.48) : le fil reste sur Discord.
+            if (erreur instanceof ErreurSite && erreur.code === 'forum_forbidden') {
+                this.avertir(ctx, 'Forum : le fil « %s » de %s n’est pas recopié, son auteur n’a pas le droit d’écrire dans ce forum du site.', fil.name, ouverture.author.tag);
+
+                return null;
+            }
+
+            // Un auteur que la modération du site a sanctionné : son fil reste sur Discord, sans alerte pour l'équipe.
+            if (refusDeModeration(erreur)) {
+                ctx.journal.info('Forum : le fil « %s » de %s n’est pas recopié, une sanction de modération du site l’en empêche (%s).', fil.name, ouverture.author.tag, erreur.code);
+
+                return null;
+            }
+
+            throw erreur;
+        }
 
         await ctx.site.lier('topic', sujet.id, fil.id);
 
@@ -567,6 +597,18 @@ export class SynchroForum implements Fonctionnalite {
         } catch (erreur) {
             if (erreur instanceof ErreurSite && erreur.code === 'topic_locked') {
                 ctx.journal.info('Forum : une réponse de %s n’est pas recopiée, le sujet n° %d est verrouillé sur le site.', m.author.tag, sujetId);
+
+                return false;
+            }
+
+            if (erreur instanceof ErreurSite && erreur.code === 'forum_forbidden') {
+                this.avertir(ctx, 'Forum : les réponses de %s ne sont pas recopiées dans le sujet n° %d, il n’a pas le droit d’écrire dans ce forum du site.', m.author.tag, sujetId);
+
+                return false;
+            }
+
+            if (refusDeModeration(erreur)) {
+                ctx.journal.info('Forum : une réponse de %s n’est pas recopiée dans le sujet n° %d, une sanction de modération du site l’en empêche (%s).', m.author.tag, sujetId, erreur.code);
 
                 return false;
             }
@@ -847,6 +889,45 @@ export class SynchroForum implements Fonctionnalite {
         }
 
         this.salonsDits = ctx.config.channels.length;
+    }
+
+    /**
+     * Les permissions de chaque salon relié suivent les droits de son forum sur le site (réglage « droits ») ; le bot
+     * ne touche qu'à ce qu'il gère (droits.ts), et seulement là où il y a quelque chose à changer.
+     */
+    private async accorderDroits(ctx: Contexte): Promise<void> {
+        if (ctx.reglages.droits === false) {
+            return;
+        }
+
+        for (const salon of ctx.config.channels) {
+            const canal = ctx.guilde.channels.cache.get(salon.channel_id);
+
+            if (!canal || canal.type !== ChannelType.GuildForum || !salon.access) {
+                continue;
+            }
+
+            const existants = [...canal.permissionOverwrites.cache.values()].map((o) => ({ id: o.id, type: o.type === 1 ? 1 as const : 0 as const, allow: o.allow.bitfield, deny: o.deny.bitfield }));
+            const plan = planDesDroits(salon.access, salon.mode !== 'reaction', { everyone: ctx.guilde.roles.everyone.id, bot: ctx.client.user.id, roles: ctx.config.roles }, existants);
+
+            if (!plan.poser.length && !plan.retirer.length) {
+                continue;
+            }
+
+            try {
+                for (const e of plan.poser) {
+                    await ctx.client.rest.put(Routes.channelPermission(canal.id, e.id), { body: { type: e.type, allow: String(e.allow), deny: String(e.deny) }, reason: 'NeoFrag : droits du forum du site' });
+                }
+
+                for (const id of plan.retirer) {
+                    await canal.permissionOverwrites.delete(id, 'NeoFrag : droits du forum du site');
+                }
+
+                ctx.journal.info('Forum : les permissions du salon « %s » suivent les droits de son forum sur le site.', canal.name);
+            } catch (erreur) {
+                this.avertir(ctx, 'Forum : les permissions du salon « %s » ne suivent pas les droits de son forum — %s', canal.name, messageErreur(erreur));
+            }
+        }
     }
 
     private avertir(ctx: Contexte, modele: string, ...args: Valeur[]): void {

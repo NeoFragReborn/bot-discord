@@ -159,7 +159,7 @@ async function appliquer(plan: PlanMiseEnPlace, { guilde }: Outils): Promise<Com
 
         try {
             if (!role) {
-                role = await guilde.roles.create({ name: nom, ...(r.couleur && /^#[0-9a-f]{6}$/i.test(r.couleur) ? { color: r.couleur as `#${string}` } : {}), mentionable: false, reason: raison });
+                role = await guilde.roles.create({ name: nom, ...(r.couleur && /^#[0-9a-f]{6}$/i.test(r.couleur) ? { colors: { primaryColor: r.couleur as `#${string}` } } : {}), mentionable: false, reason: raison });
                 compteRendu.cree.roles.push(role.id);
             }
 

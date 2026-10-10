@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planifier, type EtatDiscord } from './plan.js';
+import { apparenceVoulue, planifier, type EtatDiscord } from './plan.js';
 
 const RELIES = [
     { group_key: 'members', role_id: '100' },
@@ -49,4 +49,17 @@ test('un pseudo trop long est coupé à 32 caractères, sans couper un émoji en
 
     assert.equal(Array.from(pseudo).length, 32);
     assert.equal(pseudo, '🎮'.repeat(32));
+});
+
+test('un rôle relié prend le nom et la couleur de son groupe, seulement ce qui diffère', () => {
+    assert.deepEqual(apparenceVoulue({ name: 'Modérateur', color: '#ffc107' }, { name: 'Modo', color: 0 }), { name: 'Modérateur', color: 0xffc107 });
+    assert.deepEqual(apparenceVoulue({ name: 'Modérateur', color: '#FFC107' }, { name: 'Modérateur', color: 0 }), { color: 0xffc107 });
+    assert.equal(apparenceVoulue({ name: ' Modérateur ', color: '#ffc107' }, { name: 'Modérateur', color: 0xffc107 }), null);
+});
+
+test('un groupe sans couleur, ou un site qui ne dit pas le nom, laisse le rôle tel quel', () => {
+    assert.equal(apparenceVoulue({ name: 'Membres', color: null }, { name: 'Membres', color: 0x123456 }), null);
+    assert.equal(apparenceVoulue({}, { name: 'Membres', color: 0x123456 }), null);
+    assert.equal(apparenceVoulue({ name: 'Membres', color: 'danger' }, { name: 'Membres', color: 0 }), null);
+    assert.equal(apparenceVoulue({ name: 'x'.repeat(150) }, { name: 'x'.repeat(100), color: 0 }), null);
 });
