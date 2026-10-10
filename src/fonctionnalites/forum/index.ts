@@ -21,7 +21,7 @@
  * écrire n'y poste pas.
  */
 
-import { ChannelType, Events, GatewayIntentBits, MessageFlags, PermissionsBitField, Routes, type AnyThreadChannel, type Attachment, type ForumChannel, type GuildMember, type Message, type MessageReaction, type PartialMessage, type PartialMessageReaction, type PartialUser, type User, type Webhook } from 'discord.js';
+import { ChannelType, Events, GatewayIntentBits, MessageFlags, PermissionsBitField, Routes, type AnyThreadChannel, type ForumChannel, type GuildMember, type Message, type MessageReaction, type PartialMessage, type PartialMessageReaction, type PartialUser, type User, type Webhook } from 'discord.js';
 import { formater, messageErreur, type Valeur } from '../../journal.js';
 import { ErreurSite, refusDeModeration, type AuteurDiscord, type Evenement, type MessageForum, type SalonRelie, type Sujet } from '../../site.js';
 import { TEXTES } from '../../textes.js';
@@ -30,17 +30,11 @@ import type { Contexte, Fonctionnalite, Reglage } from '../types.js';
 import { planDesDroits } from './droits.js';
 import { correspondancesDuSalon, etiquettesDuFil, memesEtiquettes, prefixeDuFil } from './etiquettes.js';
 import { FileParCle } from './file.js';
-import { discordVersSite, messagePourDiscord, tenirDansDiscord, type PieceJointe } from './markdown.js';
+import { ImagesDuSite } from '../images.js';
+import { messagePourDiscord, tenirDansDiscord } from './markdown.js';
 
 /** Messages d'un fil recopiés au plus quand on le publie à la demande. */
 const FIL_MAX = 500;
-
-/** Les images qu'un message du forum garde (celles de l'éditeur du site), et leur poids au plus : 5 Mo. */
-const IMAGES_GARDEES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-const IMAGE_TAILLE_MAX = 5 * 1024 * 1024;
-
-/** Les images déjà gardées sur le site dont on se souvient, pour ne pas les renvoyer à chaque modification. */
-const IMAGES_EN_MEMOIRE = 500;
 
 /** Les images d'un message du site, en aperçus que Discord montre sous le texte. */
 function apercus(images: readonly string[]): { image: { url: string } }[] {
@@ -80,10 +74,8 @@ export class SynchroForum implements Fonctionnalite {
     private webhooks = new Map<string, Webhook>();
     private file = new FileParCle();
     private avertis = new Set<string>();
-    /** Pièce jointe Discord → son adresse sur le site, une fois l'image gardée. */
-    private imagesGardees = new Map<string, string>();
-    /** Le site ne garde pas d'images (d'avant la 1.2.27) : on ne lui en envoie plus. */
-    private siteSansImages = false;
+    /** Les images jointes sur Discord, gardées par le site (module commun avec le Bugtracker). */
+    private images = new ImagesDuSite('Forum');
     private retraits: (() => void)[] = [];
     private salonsDits = -1;
 
@@ -666,68 +658,8 @@ export class SynchroForum implements Fonctionnalite {
         return { discord: { id: m.author.id, username: m.member?.displayName ?? m.author.globalName ?? m.author.username, avatar: m.author.displayAvatarURL({ extension: 'png', size: 128 }) } };
     }
 
-    private async contenuVersSite(ctx: Contexte, m: Message): Promise<string> {
-        const pieces: PieceJointe[] = [];
-
-        for (const a of m.attachments.values()) {
-            const chemin = await this.imageSurLeSite(ctx, a);
-
-            pieces.push({ nom: a.name, url: a.url, ...(chemin ? { chemin } : {}) });
-        }
-
-        return discordVersSite(m.cleanContent, pieces, m.url);
-    }
-
-    /**
-     * Une image jointe sur Discord, gardée sur le site — les adresses des fichiers de Discord expirent —, et
-     * son adresse là-bas. NULL pour ce qui n'est pas une image du forum, une image trop lourde, ou un envoi
-     * raté : le message garde alors le lien vers Discord, comme pour tout autre fichier.
-     */
-    private async imageSurLeSite(ctx: Contexte, a: Attachment): Promise<string | null> {
-        const type = (a.contentType ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
-
-        if (this.siteSansImages || !IMAGES_GARDEES.includes(type) || a.size > IMAGE_TAILLE_MAX) {
-            return null;
-        }
-
-        const connue = this.imagesGardees.get(a.id);
-
-        if (connue) {
-            return connue;
-        }
-
-        try {
-            const reponse = await fetch(a.url, { signal: AbortSignal.timeout(15_000) });
-
-            if (!reponse.ok) {
-                throw new Error(`Discord : HTTP ${reponse.status}`);
-            }
-
-            const octets = new Uint8Array(await reponse.arrayBuffer());
-
-            if (octets.byteLength > IMAGE_TAILLE_MAX) {
-                return null;
-            }
-
-            const image = await ctx.site.envoyerImage(octets, a.name, type);
-
-            if (this.imagesGardees.size >= IMAGES_EN_MEMOIRE) {
-                this.imagesGardees.delete(this.imagesGardees.keys().next().value ?? '');
-            }
-
-            this.imagesGardees.set(a.id, image.path);
-
-            return image.path;
-        } catch (erreur) {
-            // Un site d'avant la 1.2.27 ne connaît pas cette adresse : on le dit une fois, et l'on garde les liens.
-            if (erreur instanceof ErreurSite && erreur.code === 'not_found') {
-                this.siteSansImages = true;
-            }
-
-            ctx.journal.warn('Forum : %s', `${a.name} — ${messageErreur(erreur)}`);
-
-            return null;
-        }
+    private contenuVersSite(ctx: Contexte, m: Message): Promise<string> {
+        return this.images.contenu(ctx, m);
     }
 
     /** Le compte Discord de l'auteur d'un message du site (quand Discord ne le dit plus : message effacé). */

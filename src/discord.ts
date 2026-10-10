@@ -6,6 +6,7 @@
  */
 
 import { ChannelType, Client, Events, MessageFlags, Partials, PermissionsBitField, REST, Routes, type APIApplication, type Guild, type Interaction, type RESTPostAPIChatInputApplicationCommandsJSONBody } from 'discord.js';
+import { SuiviConnexion } from './connexion.js';
 import type { Contexte, Fonctionnalite, Valeurs } from './fonctionnalites/types.js';
 import { Textes } from './i18n.js';
 import { intentsDemandes, intentsPermis, type IntentsPermis } from './intents.js';
@@ -128,6 +129,7 @@ export class ConnexionDiscord implements Connexion {
         private readonly journal: Journal,
         private readonly fonctionnalites: readonly Fonctionnalite[],
         readonly intents: IntentsPermis,
+        private readonly coupures: SuiviConnexion,
     ) {
         this.curseur = config.events_cursor;
     }
@@ -177,8 +179,12 @@ export class ConnexionDiscord implements Connexion {
 
         client.on(Events.Error, (erreur) => journal.error('Discord : %s', messageErreur(erreur)));
         client.on(Events.Warn, (message) => journal.warn('Discord : %s', message));
-        client.on(Events.ShardReconnecting, () => journal.warn('Connexion à Discord perdue : reconnexion…'));
-        client.on(Events.ShardResume, () => journal.info('Connexion à Discord rétablie.'));
+        // Une reconnexion que Discord demande et qui reprend dans la seconde ne se dit pas ; une coupure qui dure, si
+        // (SuiviConnexion). La connexion revient par une reprise de session, ou par une nouvelle.
+        const coupures = new SuiviConnexion(journal);
+        client.on(Events.ShardReconnecting, () => coupures.perdue());
+        client.on(Events.ShardResume, () => coupures.retablie());
+        client.on(Events.ShardReady, () => coupures.retablie());
 
         const prete = new Promise<Client<true>>((resolve, reject) => {
             const minuterie = setTimeout(() => reject(new ErreurConnexion(false, 'Discord n’a pas accepté la connexion dans la minute.')), DELAI_CONNEXION);
@@ -192,6 +198,7 @@ export class ConnexionDiscord implements Connexion {
         try {
             await client.login(config.token);
         } catch (erreur) {
+            coupures.arreter();
             await client.destroy();
 
             if ((erreur as { code?: string }).code === 'TokenInvalid') {
@@ -206,11 +213,12 @@ export class ConnexionDiscord implements Connexion {
         try {
             connecte = await prete;
         } catch (erreur) {
+            coupures.arreter();
             await client.destroy();
             throw erreur;
         }
 
-        const connexion = new ConnexionDiscord(connecte, config, site, journal, fonctionnalites, permis);
+        const connexion = new ConnexionDiscord(connecte, config, site, journal, fonctionnalites, permis, coupures);
 
         // Invité plus tard sur le serveur : les fonctionnalités démarrent à ce moment-là.
         connecte.on(Events.GuildCreate, (guilde) => {
@@ -369,6 +377,7 @@ export class ConnexionDiscord implements Connexion {
         // Les écouteurs d'abord : fermer la connexion émet « reconnexion », que le journal
         // rapporterait comme une coupure.
         this.client.removeAllListeners();
+        this.coupures.arreter();
         await this.client.destroy();
     }
 

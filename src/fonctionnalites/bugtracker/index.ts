@@ -17,7 +17,8 @@ import { ErreurSite, refusDeModeration, type AuteurDiscord, type Evenement, type
 import { TEXTES } from '../../textes.js';
 import { decrite, signature, webhookDuSalon } from '../commun.js';
 import { FileParCle } from '../forum/file.js';
-import { discordVersSite, tenirDansDiscord } from '../forum/markdown.js';
+import { tenirDansDiscord } from '../forum/markdown.js';
+import { ImagesDuSite } from '../images.js';
 import type { Contexte, Fonctionnalite, Reglage } from '../types.js';
 import { STATUTS_CLOS, etiquettesDuTicket, nomsDesEtiquettes, nomsDuSalon, typeDesEtiquettes, typesDuSalon, type Noms } from './etiquettes.js';
 
@@ -46,6 +47,8 @@ export class SynchroBugtracker implements Fonctionnalite {
     private commandesActives = true;
     private webhooks = new Map<string, Webhook>();
     private file = new FileParCle();
+    /** Les images jointes sur Discord, gardées par le site comme au forum : une capture de bogue reste (m10). */
+    private images = new ImagesDuSite('Bugtracker');
     private avertis = new Set<string>();
     private salonPrecedent = '';
     private ideesPrecedent = '';
@@ -527,7 +530,7 @@ export class SynchroBugtracker implements Fonctionnalite {
             return;
         }
 
-        const contenu = discordVersSite(m.cleanContent, [...m.attachments.values()].map((a) => ({ nom: a.name, url: a.url })), m.url);
+        const contenu = await this.images.contenu(ctx, m);
 
         if (contenu) {
             try {
@@ -560,7 +563,7 @@ export class SynchroBugtracker implements Fonctionnalite {
         const type = typeDesEtiquettes(fil.appliedTags, canal.availableTags, noms, canal.id === this.canalIdees(ctx)?.id ? 'feature' : 'bug');
 
         try {
-            const ticket = await ctx.site.ouvrirTicket(fil.name, discordVersSite(ouverture.cleanContent, [...ouverture.attachments.values()].map((a) => ({ nom: a.name, url: a.url })), ouverture.url) || fil.name, type, this.auteurDe(ouverture.author.id, ouverture.member?.displayName ?? ouverture.author.username, ouverture.author.displayAvatarURL({ extension: 'png', size: 128 })));
+            const ticket = await ctx.site.ouvrirTicket(fil.name, (await this.images.contenu(ctx, ouverture)) || fil.name, type, this.auteurDe(ouverture.author.id, ouverture.member?.displayName ?? ouverture.author.username, ouverture.author.displayAvatarURL({ extension: 'png', size: 128 })));
 
             await ctx.site.lier('ticket', ticket.id, fil.id);
             await fil.setAppliedTags(etiquettesDuTicket(canal.availableTags, noms, ticket.type, ticket.status), 'NeoFrag : ticket ouvert').catch(() => undefined);
@@ -599,7 +602,7 @@ export class SynchroBugtracker implements Fonctionnalite {
         }
 
         const lien = await ctx.site.lien('comment', { discordId: m.id });
-        const contenu = discordVersSite(m.cleanContent, [...m.attachments.values()].map((a) => ({ nom: a.name, url: a.url })), m.url);
+        const contenu = await this.images.contenu(ctx, m);
 
         if (lien && contenu) {
             await ctx.site.modifierCommentaireTicket(lien.site_id, contenu, this.auteurDe(m.author.id)).catch((e: unknown) => this.ignorerSiPasAuteur(e));

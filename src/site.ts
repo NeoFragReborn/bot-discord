@@ -50,6 +50,8 @@ export interface ConfigBot {
     features?: Record<string, { enabled: boolean; settings: Record<string, string | number | boolean | null> }>;
     /** La langue du site (code à deux lettres). */
     lang?: string;
+    /** Le texte d'un ticket montre les images que le site garde (NeoFrag Reborn 1.2.49 ; absent avant : des liens). */
+    tickets_images?: boolean;
     /** Les traductions des textes que le bot poste sur Discord (cf. textes.ts) : modèle → langue → texte. */
     i18n?: Record<string, Partial<Record<string, string>>>;
 }

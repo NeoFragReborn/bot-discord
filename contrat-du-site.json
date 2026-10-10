@@ -23,6 +23,8 @@
         "Discord : %s",
         "Connexion à Discord perdue : reconnexion…",
         "Connexion à Discord rétablie.",
+        "Connexion à Discord perdue depuis %d s : reconnexion en cours…",
+        "Connexion à Discord rétablie après %d s.",
         "Discord n’a pas accepté la connexion dans la minute.",
         "Discord refuse la clé du bot : collez la bonne dans l’administration du site (Discord → Connexion).",
         "Connexion à Discord impossible : %s",

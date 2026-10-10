@@ -1,6 +1,6 @@
 {
     "name": "neofrag-reborn-bot",
-    "version": "0.2.5",
+    "version": "0.2.7",
     "private": true,
     "description": "Le bot Discord de NeoFrag Reborn : il relie un site et son serveur Discord. Il se règle depuis l'administration du site (module « Discord ») et ne garde sur sa machine que l'adresse du site et une clé d'accès.",
     "license": "LGPL-3.0-or-later",

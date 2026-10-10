@@ -4,6 +4,27 @@ Le bot a ses propres numéros de version, indépendants de ceux de NeoFrag Rebor
 la version du site qu'elle demande. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et les numéros le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.2.7] — 2026-10-10
+
+Demande NeoFrag Reborn **1.2.12** ou plus récent ; les images d'un ticket demandent la **1.2.49** — avec une version
+plus ancienne, elles restent des liens vers Discord, comme avant.
+
+### Ajouté
+- **Les images jointes à un ticket du Bugtracker gardent leur place sur le site** : une capture d'un bogue, la
+  maquette d'une idée, envoyées dans le fil Discord d'un ticket — salon des tickets ou des suggestions —, à son
+  ouverture ou dans une réponse. Le site les garde, comme celles du forum, et le ticket les montre ; avant, il n'en
+  restait qu'un lien vers le message Discord. Le forum et le Bugtracker partagent maintenant ce code.
+
+## [0.2.6] — 2026-10-10
+
+Demande NeoFrag Reborn **1.2.12** ou plus récent, comme la 0.2.5.
+
+### Modifié
+- **Le journal ne note plus les reconnexions ordinaires à Discord.** Discord demande lui-même au bot de se
+  reconnecter plusieurs fois par jour, et la connexion revient dans la seconde : chacune s'écrivait en
+  avertissement, « Connexion à Discord perdue », que l'administration du site montrait comme un incident. Seule
+  une coupure qui dure plus d'une minute se dit désormais, et sa durée à son retour.
+
 ## [0.2.5] — 2026-10-09
 
 Demande NeoFrag Reborn **1.2.12** ou plus récent, comme la 0.2.4 ; un ticket qui change de salon demande
