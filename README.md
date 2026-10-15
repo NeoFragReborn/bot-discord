@@ -35,7 +35,10 @@ Ses fonctionnalités s'allument une à une, depuis l'administration du site :
   forum sans compte relié ;
 - 🐛 **Bugtracker** — chaque ticket devient un fil, son type et son statut en étiquettes ; `/bug` et
   `/idee` ouvrent un ticket depuis Discord ;
-- ⏳ **Rôles temporaires** — `/role` donne un rôle pour une durée, que le bot retire à l'échéance.
+- ⏳ **Rôles temporaires** — `/role` donne un rôle pour une durée, que le bot retire à l'échéance ;
+- 🛡️ **Sanctions reliées** — le muet et les bannissements du site s'appliquent au compte Discord relié du membre,
+  et ceux d'un modérateur relié peuvent passer au site, qui les rejuge ;
+- 🫂 **Collectifs** — chaque collectif du site reçoit un rôle et un salon privé, que seuls ses membres voient.
 
 ## 🧰 Réglé depuis le site
 

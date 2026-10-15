@@ -19,7 +19,7 @@ Paquets npm de production — `npm ci` les installe, chacun avec son texte de li
   @sapphire/async-queue 1.5.5 — MIT
   @sapphire/shapeshift 4.0.0 — MIT
   @sapphire/snowflake 3.5.5 — MIT
-  @types/node 22.20.4 — MIT
+  @types/node 22.20.5 — MIT
   @types/ws 8.18.2 — MIT
   @vladfrangu/async_event_emitter 2.4.7 — MIT
   discord-api-types 0.38.56 — MIT

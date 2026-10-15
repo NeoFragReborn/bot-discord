@@ -169,6 +169,36 @@ export interface RoleTemporaire {
     reason: string;
 }
 
+/** Une sanction du site qui vaut sur Discord (m03b, NeoFrag Reborn 1.2.50) : muet ou bannissement de tout le site. */
+export interface SanctionDiscord {
+    sanction_id: number;
+    user_id: number;
+    discord_id: string;
+    type: 'mute' | 'ban_temp' | 'ban_perm';
+    /** Son échéance, en secondes Unix ; NULL : sans fin. */
+    expires_at: number | null;
+    /** Prononcée sur le site, ou rapportée de Discord par le bot. */
+    origine: 'site' | 'discord';
+}
+
+/** Ce que le bot rapporte d'une sanction prononcée sur Discord. */
+export interface SanctionRapportee {
+    target_discord_id: string;
+    executor_discord_id: string;
+    type: SanctionDiscord['type'];
+    duration_seconds?: number | null;
+    reason?: string;
+}
+
+/** Un collectif qui veut son espace sur Discord (m15, v3) : son rôle et son salon, s'ils existent déjà. */
+export interface Collectif {
+    collective_id: number;
+    name: string;
+    group_key: string;
+    role_id: string | null;
+    channel_id: string | null;
+}
+
 /** Un ticket du Bugtracker. */
 export interface Ticket {
     id: number;
@@ -393,6 +423,34 @@ export class Site {
 
     async retirerRoleTemporaire(id: number): Promise<void> {
         await this.requete('DELETE', `discord/timed-roles/${id}`);
+    }
+
+    /** Les sanctions du site qui valent EN CE MOMENT sur Discord (m03b). */
+    async sanctions(): Promise<SanctionDiscord[]> {
+        return (await this.requete<{ sanctions: SanctionDiscord[] }>('GET', 'discord/sanctions')).sanctions;
+    }
+
+    /**
+     * Rapporte au site une sanction prononcée sur Discord. Le site refuse ce qui n'est pas sûr : erreurs
+     * `executor_unlinked`, `target_unlinked`, `forbidden` (le modérateur n'a pas ce droit sur le site), `refused`.
+     */
+    async rapporterSanction(r: SanctionRapportee): Promise<{ sanction_id: number; requires_approval: boolean }> {
+        return this.requete('POST', 'discord/sanctions', r);
+    }
+
+    /** Lève sur le site une sanction VENUE de Discord (erreur `site_sanction` pour une sanction du site). */
+    async leverSanction(id: number, executorDiscordId: string): Promise<void> {
+        await this.requete('POST', `discord/sanctions/${id}/revoke`, { executor_discord_id: executorDiscordId });
+    }
+
+    /** Les collectifs qui veulent leur espace sur Discord (m15). */
+    async collectifs(): Promise<Collectif[]> {
+        return (await this.requete<{ collectives: Collectif[] }>('GET', 'discord/collectives')).collectives;
+    }
+
+    /** Le rôle ou le salon que le bot vient de créer pour un collectif : le site en fait la correspondance du groupe. */
+    async collectifEnPlace(id: number, enPlace: { role_id?: string; channel_id?: string }): Promise<void> {
+        await this.requete('POST', `discord/collectives/${id}`, enPlace);
     }
 
     /** Les tickets qui suivent `apres` (les seuls encore ouverts si `ouverts`), par lots ; `next` est le curseur suivant. */

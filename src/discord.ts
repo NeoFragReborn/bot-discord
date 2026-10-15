@@ -39,6 +39,28 @@ export const PERMISSIONS_DU_BOT = [
     PermissionsBitField.Flags.UseApplicationCommands,
 ] as const;
 
+/**
+ * Les droits du bot sur le serveur, jugés contre ceux du lien d'invitation (m15, 2026-10-16) : « Administrateur », dont il
+ * n'a pas besoin — un bot administrateur que l'on compromet ouvre tout le serveur —, et ce qui lui manque. Les noms sont
+ * ceux de discord.js (« ManageRoles »), les mêmes que le guide.
+ */
+export function droitsDuBot(permissions: Readonly<PermissionsBitField> | null): { administrateur: boolean; manquants: string[] } {
+    if (!permissions) {
+        return { administrateur: false, manquants: [] };
+    }
+
+    if (permissions.has(PermissionsBitField.Flags.Administrator, false)) {
+        return { administrateur: true, manquants: [] };
+    }
+
+    const noms = Object.entries(PermissionsBitField.Flags) as [string, bigint][];
+
+    return {
+        administrateur: false,
+        manquants: PERMISSIONS_DU_BOT.filter((p) => !permissions.has(p, false)).map((p) => noms.find(([, v]) => v === p)?.[0] ?? String(p)),
+    };
+}
+
 export function lienInvitation(clientId: string): string {
     const permissions = new PermissionsBitField([...PERMISSIONS_DU_BOT]).bitfield.toString();
 
@@ -387,6 +409,14 @@ export class ConnexionDiscord implements Connexion {
         const actives = this.fonctionnalites.filter((f) => estActive(f, this.config));
 
         this.journal.info('Serveur « %s » rejoint : %d fonctionnalité(s) à démarrer.', guilde.name, actives.length);
+
+        const droits = droitsDuBot(guilde.members.me?.permissions ?? null);
+
+        if (droits.administrateur) {
+            this.journal.warn('Le bot est administrateur du serveur : il n’en a pas besoin. Retirez-lui ce droit, et laissez à son rôle les permissions du lien d’invitation (le guide « Le bot Discord » les liste).');
+        } else if (droits.manquants.length) {
+            this.journal.warn('Il manque au rôle du bot des permissions du lien d’invitation : %s.', droits.manquants.join(', '));
+        }
 
         for (const f of actives) {
             if (await this.prudemment(f, 'démarrage', () => f.demarrer(this.contexte(f)))) {

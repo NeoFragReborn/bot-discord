@@ -4,6 +4,30 @@ Le bot a ses propres numéros de version, indépendants de ceux de NeoFrag Rebor
 la version du site qu'elle demande. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et les numéros le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.3.0] — 2026-10-16
+
+Demande NeoFrag Reborn **1.2.12** ou plus récent ; les sanctions reliées demandent la **1.2.50** — avec une version
+plus ancienne, laissez-les éteintes : le site ne les connaît pas, et le journal le noterait toutes les dix minutes.
+
+### Ajouté
+- **Les sanctions reliées** (fonctionnalité *Sanctions reliées*, éteinte au départ). Le muet et les bannissements de
+  tout le site s'appliquent au compte Discord relié du membre : le muet devient une exclusion temporaire, renouvelée
+  au-delà des 28 jours que Discord permet ; un bannissement temporaire, un bannissement levé à l'échéance. Levée sur
+  le site, la sanction est levée sur Discord. Sur réglage, une exclusion ou un bannissement posés sur Discord par un
+  modérateur relié à un compte du site qui en a le droit passent au site, qui les rejuge. Un avertissement, une
+  restriction ou un shadow ban ne passent jamais. Il faut au rôle du bot *Bannir des membres*, *Exclure
+  temporairement des membres* et, pour le second sens, *Voir les logs du serveur* : le journal dit ce qui manque.
+- **Les collectifs** (fonctionnalité *Collectifs*, éteinte au départ ; demande la **1.2.50** et son module
+  *Collectifs*). Chaque collectif du site reçoit un rôle, nommé comme lui et relié à son groupe — la fonctionnalité
+  des rôles le donne à ses membres —, et un salon privé dans la catégorie *Collectifs*, que seul ce rôle voit. Un
+  rôle ou un salon supprimé à la main revient, un collectif renommé se renomme ; un collectif supprimé perd son
+  rôle, et son salon reste, visible des seuls administrateurs.
+
+### Sécurité
+- **Le bot dit s'il est administrateur du serveur.** Il n'en a pas besoin, et le lien d'invitation ne le demande
+  pas ; un rôle donné à la main pouvait le lui accorder. À chaque arrivée sur le serveur, son journal le signale, et
+  nomme les permissions du lien d'invitation qui manquent à son rôle.
+
 ## [0.2.7] — 2026-10-10
 
 Demande NeoFrag Reborn **1.2.12** ou plus récent ; les images d'un ticket demandent la **1.2.49** — avec une version
