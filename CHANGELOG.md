@@ -4,6 +4,16 @@ Le bot a ses propres numéros de version, indépendants de ceux de NeoFrag Rebor
 la version du site qu'elle demande. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et les numéros le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [0.3.1] — 2026-11-02
+
+Demande NeoFrag Reborn **1.2.12** ou plus récent, comme la 0.3.0.
+
+### Sécurité
+- **discord.js 14.28 et undici 6.29.1** : la bibliothèque réseau qu'emploie discord.js avait cinq failles publiées,
+  dont un contournement de la vérification des certificats TLS (GHSA-2m5v-pch6-74hx) et plusieurs dénis de service.
+- **La clé d'accès ne circule plus en clair** : `NF_SITE_URL` doit être en `https://` (le `http://` n'est accepté que vers
+  `localhost`). Un bot réglé sur une adresse en `http://` refuse de démarrer et le dit.
+
 ## [0.3.0] — 2026-10-16
 
 Demande NeoFrag Reborn **1.2.12** ou plus récent ; les sanctions reliées demandent la **1.2.50** — avec une version

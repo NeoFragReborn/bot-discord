@@ -25,6 +25,12 @@ export function lireEnvironnement(env: NodeJS.ProcessEnv): Environnement {
         throw new ErreurEnvironnement('NF_SITE_URL manque ou n’est pas une adresse http(s) : copiez-la depuis l’administration du site (Discord → Clé d’accès du bot).');
     }
 
+    // La clé part à chaque appel : en http, elle circulerait en clair, et elle ouvre la clé Discord du site et
+    // l’écriture au forum au nom des membres. Seule la machine elle-même peut se joindre en http.
+    if (/^http:/i.test(site) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(site)) {
+        throw new ErreurEnvironnement('NF_SITE_URL doit être en https : la clé d’accès du bot ne doit pas circuler en clair (http n’est accepté que vers localhost).');
+    }
+
     if (!/^nfr_[0-9a-f]{40}$/.test(cle)) {
         throw new ErreurEnvironnement('NF_API_KEY manque ou n’a pas la forme d’une clé d’accès (nfr_…) : copiez-la depuis l’administration du site (Discord → Clé d’accès du bot).');
     }

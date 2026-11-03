@@ -15,6 +15,13 @@ test('une adresse absente ou qui n’est pas http(s) est refusée', () => {
     assert.throws(() => lireEnvironnement({ NF_SITE_URL: 'ftp://exemple.fr', NF_API_KEY: CLE }), ErreurEnvironnement);
 });
 
+test('une adresse en http est refusée, sauf vers la machine elle-même', () => {
+    assert.throws(() => lireEnvironnement({ NF_SITE_URL: 'http://exemple.fr', NF_API_KEY: CLE }), ErreurEnvironnement);
+    assert.throws(() => lireEnvironnement({ NF_SITE_URL: 'http://localhost.exemple.fr', NF_API_KEY: CLE }), ErreurEnvironnement);
+    assert.equal(lireEnvironnement({ NF_SITE_URL: 'http://127.0.0.1:8250', NF_API_KEY: CLE }).site, 'http://127.0.0.1:8250/');
+    assert.equal(lireEnvironnement({ NF_SITE_URL: 'http://localhost/nf', NF_API_KEY: CLE }).site, 'http://localhost/nf/');
+});
+
 test('une clé d’accès mal formée est refusée', () => {
     assert.throws(() => lireEnvironnement({ NF_SITE_URL: 'https://exemple.fr', NF_API_KEY: 'nfr_court' }), ErreurEnvironnement);
     assert.throws(() => lireEnvironnement({ NF_SITE_URL: 'https://exemple.fr', NF_API_KEY: CLE.toUpperCase() }), ErreurEnvironnement);
